@@ -101,7 +101,7 @@ ALL TESTS PASSED
       (used only as CLT arguments, never written to any file);
       `qcc` (GCC 12.2.0) cross-compiles for x86_64 and aarch64le —
       verified with real QNX ELF outputs.
-- [ ] **QSTI for QEMU package NOT installed** — four CLT attempts on
+- [ ] **QSTI for QEMU package NOT installed** — five CLT attempts on
       2026-11-24 failed in the Collect (download) phase; two distinct
       causes, both documented with exact errors in "Phase 2
       completion" below: (1) VM filesystem layout (7.5 GB overlay
@@ -203,7 +203,7 @@ it was never written to any file, log, or this repo, and is discarded.
   `$HOME/.qnx/license/` (`HOME=/home/hatch` on this VM) — the
   `licenses` file was copied there, after which `qcc` reports no
   licence complaint.
-- **QSTI package install: FAILED (4 attempts, 2 causes).**
+- **QSTI package install: FAILED (5 attempts, 2 causes).**
   Package `com.qnx.qnx800.quickstart.qemu`
   0.5.0.00050T202609021847L; its three binary artifacts have
   download sizes ≈ 1.04 GB + 1.03 GB + 0.43 GB (≈ 10 GB uncompressed).
@@ -229,6 +229,20 @@ it was never written to any file, log, or this repo, and is discarded.
     Step 2g command in a later session (helper:
     `~/workspace/qnx/run-clt.sh qsti`, password via stdin). No other
     blocker stands between that and the QEMU boot phase.
+  - Attempt 5 (2026-11-24 15:38 CST, later session): the recorded
+    retry (`run-clt.sh qsti`, temporary password via stdin only)
+    failed identically — exit 13 after ~12 s, all three artifacts
+    erroring in the Collect phase with
+    `org.apache.http.client.ClientProtocolException` caused by
+    `org.apache.http.ProtocolException: The server failed to respond
+    with a valid HTTP response`. No partial install. Post-run, the
+    log scrubber was re-run (this time with the log paths passed
+    explicitly): 3 further occurrences of the temporary password in
+    QSC's own logs were redacted, and a full scan of the QSC log
+    locations, `~/.qnx`, `/root/.qnx` and this repo verified **0
+    occurrences remain**. Next retry to be scheduled in a later
+    session; the temporary password should still be rotated by the
+    holder.
 
 ## Milestone checklist
 
@@ -241,8 +255,9 @@ it was never written to any file, log, or this repo, and is discarded.
 - [ ] SDP 8.0 + QSTI installed — **SDP 8.0 baseline installed and
       verified 2026-11-24** (see Phase 2 completion); QSTI package
       download still blocked (HTTP protocol error in the CLT
-      download path after the disk-space cause was fixed) — retry
-      runbook Step 2g in a later session, then Step 3/4
+      download path after the disk-space cause was fixed; 5th attempt
+      2026-11-24 15:38 CST failed identically) — retry runbook
+      Step 2g in a later session, then Step 3/4
 - [ ] MsgSend spike on QSTI: block flow over native message passing
 - [ ] First `tracelogger` capture
 - **Week 1 exit criterion:** vitalgen → vitaldsp data flowing inside
