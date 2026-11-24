@@ -87,15 +87,51 @@ ALL TESTS PASSED
    the POSIX backend sends with `MSG_NOSIGNAL`, so a peer dying
    mid-send cannot kill the sender.
 
-## Blocked on the QNX SDP (account-holder actions)
+## QNX SDP — licence cleared; install pending one credentialed step
 
-- [ ] **myQNX licence**: accept the free non-commercial QNX Everywhere
-      licence and install QNX SDP 8.0 (~6.4 GB) — *only the account
-      holder can do this step.*
+- [x] **myQNX licence**: the account holder accepted and deployed the
+      free QNX Everywhere non-commercial licence for QNX SDP 8.0
+      (perpetual) to their myQNX account — **done 2026-11-24**. This
+      blocker is cleared.
+- [ ] **SDP 8.0 install**: host prep is done (see Phase 2 below). The
+      one remaining credentialed step is **Step 2 of
+      `~/workspace/qnx/INSTALL-RUNBOOK.md`**, run by the account holder
+      in one shell session: myQNX cookie login → download the QSC
+      installer (it is served only with a myQNX session cookie; no
+      public link exists) → verify its posted checksum → run the
+      installer → `qnxsoftwarecenter_clt` sync/activate + mirror +
+      install baseline `com.qnx.qnx800` + package
+      `com.qnx.qnx800.quickstart.qemu` into
+      `~/workspace/qnx/sdp/qnx800`. The holder types their password
+      once into a `read -s` environment variable; nothing is stored
+      by us. Everything after that step is credential-free.
 - [ ] Create the public GitHub repo under the owner's account and push.
 - [ ] (Later) upload the demo video to the owner's YouTube channel;
       final Devpost submission click. Internal deadline: **2026-12-13**
       (Devpost deadline 2026-12-15 14:00 EST).
+
+## Phase 2 prep (this VM, 2026-11-24): DONE (credential-free part)
+
+- Workspace created: `~/workspace/qnx/{sdp,targets,traces}`.
+- QEMU **8.2.2** installed via apt (`qemu-system-x86`, `qemu-utils`,
+  `qemu-block-extra`) — the version Ubuntu 24.04 ships; the QSTI guide
+  only recommends QEMU 10 for >720p/Vulkan, which this headless VM
+  doesn't use.
+- **No `/dev/kvm`** — QEMU will run in TCG emulation. In-guest timings
+  are emulation-skewed distributions, never hardware numbers (already
+  the project's reporting rule). QSTI default launch (8 vCPU / 4 GB)
+  exceeds this VM (4 vCPU / ~6 GB shared); reduce to 2 vCPU / 2 GB at
+  first boot.
+- Disk: **134 GB free** of 150 GB — SDP (~6.4 GB) + QSTI (~20 GB) fit
+  with wide margin; nothing needs freeing. `/tmp` is a 512 MB tmpfs —
+  all QNX work stays under `~/workspace/qnx/`.
+- qnx.com reachability verified with QNX's own test URL.
+- Install runbook written: `~/workspace/qnx/INSTALL-RUNBOOK.md`
+  (official-docs CLI route, exact commands, credentialed step marked).
+- The QSC installer was **not** downloaded: per QNX's official
+  unattended-install procedure it is served only with a myQNX session
+  cookie, so fetching it is part of the credentialed Step 2 (including
+  verification against the checksum posted on the download page).
 
 ## Milestone checklist
 
@@ -104,7 +140,9 @@ ALL TESTS PASSED
       supervisor, all processes running under supervision on Linux
 - [x] ECG/SpO₂/resp synthesis library with host unit tests
 - [x] Repo scaffold (README, LICENSE, design docs)
-- [ ] Licence accepted + SDP 8.0 installed *(account holder)*
+- [x] Licence accepted + deployed (account holder, 2026-11-24)
+- [ ] SDP 8.0 + QSTI installed — runbook Step 2 (account holder,
+      ~one shell session), then credential-free Steps 3–4
 - [ ] MsgSend spike on QSTI: block flow over native message passing
 - [ ] First `tracelogger` capture
 - **Week 1 exit criterion:** vitalgen → vitaldsp data flowing inside

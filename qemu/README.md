@@ -1,17 +1,20 @@
 # QNX QEMU target — in progress
 
-**Status: blocked on the QNX SDP 8.0 installation.** The free QNX
-Everywhere licence must be accepted by the account holder under their
-own myQNX account (qnx.com/getqnx); once the SDP is installed this
-folder gets the target build and the QEMU launch is completed and
-verified. Nothing here has been run against a real SDP yet — this file
-describes the plan and the exact steps, not results.
+**Status: licence cleared (accepted + deployed 2026-11-24); SDP
+install pending one credentialed step.** The exact install route is
+`~/workspace/qnx/INSTALL-RUNBOOK.md` — its Step 2 (myQNX cookie login,
+QSC installer download, `qnxsoftwarecenter_clt` baseline + QSTI
+package install into `~/workspace/qnx/sdp/qnx800`) is run by the
+account holder; everything after it is credential-free. Nothing here
+has been run against a real SDP yet — this file describes the plan
+and the exact steps, not results.
 
 ## Planned path
 
-1. **Licence + SDP.** Accept the free non-commercial QNX Everywhere
-   licence (myQNX), install QNX SDP 8.0 (~6.4 GB) on an Ubuntu x86-64
-   host.
+1. **Licence + SDP.** ~~Accept the free non-commercial QNX Everywhere
+   licence (myQNX)~~ — done 2026-11-24 (accepted + deployed,
+   perpetual). Install QNX SDP 8.0 (~6.4 GB) on this Ubuntu 24.04
+   x86-64 host per `~/workspace/qnx/INSTALL-RUNBOOK.md`.
 2. **Target image.** Use the *Quick Start Target Image for QEMU*
    (QSTI) shipped with the SDP as the base; later in the project,
    produce a single custom image with `mkqnximage` (CTI) containing
