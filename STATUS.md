@@ -87,26 +87,34 @@ ALL TESTS PASSED
    the POSIX backend sends with `MSG_NOSIGNAL`, so a peer dying
    mid-send cannot kill the sender.
 
-## QNX SDP — licence cleared; install pending one credentialed step
+## QNX SDP — installed and verified; QSTI package still blocked
 
 - [x] **myQNX licence**: the account holder accepted and deployed the
       free QNX Everywhere non-commercial licence for QNX SDP 8.0
       (perpetual) to their myQNX account — **done 2026-11-24**. This
       blocker is cleared.
-- [ ] **SDP 8.0 install**: host prep is done (see Phase 2 below), and
-      the QSC installer half of the credentialed step is now done too
-      (Phase 2 continuation below): QNX Software Center 2.0.4 is
-      installed at `~/workspace/qnx/qnxsoftwarecenter/`. What remains
-      is only the CLT block of runbook Step 2e–2g — sync/activate +
-      mirror + install baseline `com.qnx.qnx800` + package
-      `com.qnx.qnx800.quickstart.qemu` into
-      `~/workspace/qnx/sdp/qnx800` — which requires the account
-      holder's myQNX password passed once to
-      `qnxsoftwarecenter_clt`. The license-file route was tested and
-      ruled out with captured CLT output (see Phase 2 continuation):
-      the CLT has no license-import option and `-mirror` fails with
-      "Request requires authorization" without myQNX credentials.
-      Everything after that block is credential-free.
+- [x] **SDP 8.0 baseline installed and verified (2026-11-24)** — see
+      "Phase 2 completion" below. Baseline `com.qnx.qnx800`
+      **8.0.0.00141T202311271501L** in `~/workspace/qnx/sdp/qnx800`
+      (3.6 GB); licence synced and activated via the CLT using the
+      temporary password the holder provided for this one-time use
+      (used only as CLT arguments, never written to any file);
+      `qcc` (GCC 12.2.0) cross-compiles for x86_64 and aarch64le —
+      verified with real QNX ELF outputs.
+- [ ] **QSTI for QEMU package NOT installed** — four CLT attempts on
+      2026-11-24 failed in the Collect (download) phase; two distinct
+      causes, both documented with exact errors in "Phase 2
+      completion" below: (1) VM filesystem layout (7.5 GB overlay
+      root) → "No space left on device", fixed for the QSC cache by
+      relocating it to the workspace disk; (2) afterwards the
+      artifact-download requests fail in ~11 s with an Apache
+      HttpClient `ProtocolException` ("The server failed to respond
+      with a valid HTTP response") on the download redirect, while
+      the same endpoint answers a plain curl with a valid HTTP 401 —
+      i.e. the server is healthy; the failure is in the CLT/proxy
+      download path and may be transient. Retry the single runbook
+      Step 2g command in a later session; everything else is ready.
+      QEMU boot remains blocked on this package.
 - [ ] Create the public GitHub repo under the owner's account and push.
 - [ ] (Later) upload the demo video to the owner's YouTube channel;
       final Devpost submission click. Internal deadline: **2026-12-13**
@@ -163,6 +171,64 @@ ALL TESTS PASSED
   (runbook Step 2e–2g) with the holder's myQNX password supplied
   once via `read -s`. SDP 8.0 and QSTI are therefore **not yet
   installed**; QEMU boot remains the following phase.
+  *(Superseded the same day — see Phase 2 completion below.)*
+
+## Phase 2 completion (2026-11-24, credentialed session)
+
+The holder provided a temporary myQNX password for one-time use. It
+was passed only as `-myqnx.user` / `-myqnx.password` CLT arguments
+(via a helper that reads it from stdin into the process environment);
+it was never written to any file, log, or this repo, and is discarded.
+
+- **Licence sync + activation: SUCCESS.**
+  `-syncLicenseKeys -activateAll -listLicenseKeys` →
+  `License key is added: …` and the key listed as **Activated —
+  QNX Software Development Platform 8.0 — Perpetual — Developer
+  License — Non-Commercial Single-User (ver. 8.0)**.
+- **Mirror: SUCCESS.** `-mirror` generated metadata for the dropins
+  and per-account repositories without error.
+- **Baseline install: SUCCESS.** `-installBaseline com.qnx.qnx800`
+  installed **com.qnx.qnx800 8.0.0.00141T202311271501L** (profile
+  `com.qnx.qnx800_1`; targets x86_64 + aarch64le) into
+  `~/workspace/qnx/sdp/qnx800` — **3.6 GB** on disk. The fallback ID
+  was not needed.
+- **Verification (runbook Step 3): PASS.**
+  `qcc`, `q++`, `mkqnximage`, `traceprinter` all present;
+  `qcc -V` → GCC **12.2.0**, targets `gcc_ntox86_64` (default),
+  `gcc_ntoaarch64le`, plus C++ variants. A hello-world was
+  cross-compiled for **both** targets, producing QNX ELF binaries
+  (interpreter `/usr/lib/ldqnx-64.so.2`). One fix was needed first:
+  the CLT (Java `user.home` = passwd entry) stores the activated
+  licence in `/root/.qnx/license/licenses`, while native tools read
+  `$HOME/.qnx/license/` (`HOME=/home/hatch` on this VM) — the
+  `licenses` file was copied there, after which `qcc` reports no
+  licence complaint.
+- **QSTI package install: FAILED (4 attempts, 2 causes).**
+  Package `com.qnx.qnx800.quickstart.qemu`
+  0.5.0.00050T202609021847L; its three binary artifacts have
+  download sizes ≈ 1.04 GB + 1.03 GB + 0.43 GB (≈ 10 GB uncompressed).
+  - Attempts 1–2: `java.io.IOException: No space left on device` in
+    the Collect phase. Root cause (attempt 1): QSC state lives under
+    `/root/.qnx/` (Java `user.home`), which sits on this VM's
+    **7.5 GB overlay root filesystem**, not the 150 GB workspace
+    disk. Remedy applied: `/root/.qnx/swupdate` (the download cache)
+    was moved to `~/workspace/qnx/swupdate-store` and symlinked back
+    (symlinking all of `/root/.qnx` does not work — the CLT errors
+    `Cannot create /root/.qnx`). The retry also forced
+    `-Djava.io.tmpdir` to the workspace disk (ECF stages downloads
+    in `java.io.tmpdir`; `/tmp` here is a 512 MB tmpfs).
+  - Attempts 3–4: downloads now fail in ~11 s with
+    `org.apache.http.client.ClientProtocolException … ProtocolException:
+    The server failed to respond with a valid HTTP response`
+    (stack shows `RedirectExec`) for all three artifacts. The same
+    endpoint answers an unauthenticated curl with a valid HTTP 401
+    and the runbook connectivity test still passes, so the QNX
+    server is healthy; the failure is in the CLT/egress-proxy
+    download path and may be transient rate-limiting after the
+    earlier multi-GB transfers. **Next step:** rerun the single
+    Step 2g command in a later session (helper:
+    `~/workspace/qnx/run-clt.sh qsti`, password via stdin). No other
+    blocker stands between that and the QEMU boot phase.
 
 ## Milestone checklist
 
@@ -172,9 +238,11 @@ ALL TESTS PASSED
 - [x] ECG/SpO₂/resp synthesis library with host unit tests
 - [x] Repo scaffold (README, LICENSE, design docs)
 - [x] Licence accepted + deployed (account holder, 2026-11-24)
-- [ ] SDP 8.0 + QSTI installed — QSC 2.0.4 installed (2026-11-24);
-      only the credentialed CLT block (runbook Step 2e–2g) remains,
-      then credential-free Step 3 verification
+- [ ] SDP 8.0 + QSTI installed — **SDP 8.0 baseline installed and
+      verified 2026-11-24** (see Phase 2 completion); QSTI package
+      download still blocked (HTTP protocol error in the CLT
+      download path after the disk-space cause was fixed) — retry
+      runbook Step 2g in a later session, then Step 3/4
 - [ ] MsgSend spike on QSTI: block flow over native message passing
 - [ ] First `tracelogger` capture
 - **Week 1 exit criterion:** vitalgen → vitaldsp data flowing inside
