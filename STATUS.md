@@ -93,18 +93,20 @@ ALL TESTS PASSED
       free QNX Everywhere non-commercial licence for QNX SDP 8.0
       (perpetual) to their myQNX account — **done 2026-11-24**. This
       blocker is cleared.
-- [ ] **SDP 8.0 install**: host prep is done (see Phase 2 below). The
-      one remaining credentialed step is **Step 2 of
-      `~/workspace/qnx/INSTALL-RUNBOOK.md`**, run by the account holder
-      in one shell session: myQNX cookie login → download the QSC
-      installer (it is served only with a myQNX session cookie; no
-      public link exists) → verify its posted checksum → run the
-      installer → `qnxsoftwarecenter_clt` sync/activate + mirror +
-      install baseline `com.qnx.qnx800` + package
+- [ ] **SDP 8.0 install**: host prep is done (see Phase 2 below), and
+      the QSC installer half of the credentialed step is now done too
+      (Phase 2 continuation below): QNX Software Center 2.0.4 is
+      installed at `~/workspace/qnx/qnxsoftwarecenter/`. What remains
+      is only the CLT block of runbook Step 2e–2g — sync/activate +
+      mirror + install baseline `com.qnx.qnx800` + package
       `com.qnx.qnx800.quickstart.qemu` into
-      `~/workspace/qnx/sdp/qnx800`. The holder types their password
-      once into a `read -s` environment variable; nothing is stored
-      by us. Everything after that step is credential-free.
+      `~/workspace/qnx/sdp/qnx800` — which requires the account
+      holder's myQNX password passed once to
+      `qnxsoftwarecenter_clt`. The license-file route was tested and
+      ruled out with captured CLT output (see Phase 2 continuation):
+      the CLT has no license-import option and `-mirror` fails with
+      "Request requires authorization" without myQNX credentials.
+      Everything after that block is credential-free.
 - [ ] Create the public GitHub repo under the owner's account and push.
 - [ ] (Later) upload the demo video to the owner's YouTube channel;
       final Devpost submission click. Internal deadline: **2026-12-13**
@@ -128,10 +130,39 @@ ALL TESTS PASSED
 - qnx.com reachability verified with QNX's own test URL.
 - Install runbook written: `~/workspace/qnx/INSTALL-RUNBOOK.md`
   (official-docs CLI route, exact commands, credentialed step marked).
-- The QSC installer was **not** downloaded: per QNX's official
-  unattended-install procedure it is served only with a myQNX session
-  cookie, so fetching it is part of the credentialed Step 2 (including
-  verification against the checksum posted on the download page).
+- The QSC installer was **not** downloaded during prep: per QNX's
+  official unattended-install procedure it is served only with a myQNX
+  session cookie, so fetching it is part of the credentialed Step 2
+  (including verification against the checksum posted on the download
+  page). *(Superseded the same day — see below.)*
+
+## Phase 2 continuation (2026-11-24, later session)
+
+- **QSC installer obtained and installed.** The account holder
+  downloaded `qnx-setup-2.0.4-202501021438-linux.run` (104,701,288
+  bytes) through the signed-in browser. It was staged at
+  `~/workspace/qnx/`, SHA-256
+  `5695a0ec8a1fd91840753b2cba86a9325f6052d4f69c757166cc61b09bcbe507`
+  (no official checksum was recorded at download time; the
+  archive's own Makeself integrity check passed). The `.run`
+  wrapper cannot complete on this headless VM (`/dev/tty` failure),
+  so the payload's own `start.sh` was run with the same headless
+  flags — the result is identical to the official route:
+  **QNX Software Center 2.0.4 (build v202501021438) installed at
+  `~/workspace/qnx/qnxsoftwarecenter/` (207 MB)**,
+  `~/.qnx/qnx_env.ini` written. Full log in
+  `~/workspace/qnx/INSTALL-RUNBOOK.md` (execution log section).
+- **License-file route ruled out (with evidence).** The CLT has no
+  `-importLicense`/file-import option; `-syncLicenseKeys` without
+  credentials errors `Credentials for myQNX are required …`, and
+  `-mirror` fails against `https://www.qnx.com/swcenter` with
+  `Request requires authorization`. A license key string alone
+  (`-addLicenseKey`) registers locally but does not authorize
+  package downloads; QNX manual activation is GUI-only and
+  activation-only. **Remaining blocker is exactly one CLT block**
+  (runbook Step 2e–2g) with the holder's myQNX password supplied
+  once via `read -s`. SDP 8.0 and QSTI are therefore **not yet
+  installed**; QEMU boot remains the following phase.
 
 ## Milestone checklist
 
@@ -141,8 +172,9 @@ ALL TESTS PASSED
 - [x] ECG/SpO₂/resp synthesis library with host unit tests
 - [x] Repo scaffold (README, LICENSE, design docs)
 - [x] Licence accepted + deployed (account holder, 2026-11-24)
-- [ ] SDP 8.0 + QSTI installed — runbook Step 2 (account holder,
-      ~one shell session), then credential-free Steps 3–4
+- [ ] SDP 8.0 + QSTI installed — QSC 2.0.4 installed (2026-11-24);
+      only the credentialed CLT block (runbook Step 2e–2g) remains,
+      then credential-free Step 3 verification
 - [ ] MsgSend spike on QSTI: block flow over native message passing
 - [ ] First `tracelogger` capture
 - **Week 1 exit criterion:** vitalgen → vitaldsp data flowing inside
