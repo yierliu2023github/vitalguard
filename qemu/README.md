@@ -82,14 +82,16 @@ logs accumulate across boots.
 
 ## Known findings on target
 
-- **DSP restart transient.** A vitaldsp that (re)joins a running
-  stream mid-flight starts with zeroed detector state and can raise
-  a brief spurious HIGH alarm (VFIB, APNEA or ASYSTOLE, ~1–5 s)
-  within its first seconds.  It does not occur on a normal start
-  (DSP starts before the generator).  Root cause is detector
-  warm-up, not the transport; the fix is a warm-up guard in the DSP
-  (suppress condition evaluation until a few seconds of contiguous
-  samples), tracked in STATUS.md.
+- **DSP restart transient — FIXED 2026-11-25.** A vitaldsp that
+  (re)joined a running stream mid-flight used to raise a brief
+  spurious HIGH alarm (VFIB, APNEA or ASYSTOLE, ~1–5 s) from its
+  zeroed detector state.  The DSP now resets detector state on any
+  stream discontinuity and suppresses alarm raises for a 5 s
+  warm-up window after a (re)join.  Host regression tests
+  (`test_rejoin_warmup`, `test_discontinuity_reset`) and a two-boot
+  guest run (kill → restart → no audit lines; VFib 10 s injection
+  raises/clears cleanly; cold boot silent) verify the fix — see
+  WARMUP-FIX-REPORT.md in `~/workspace/qnx/custom-image/`.
 - The shipped sshd segfaults at startup in this image (spike
   finding); serial console is the access path.  Not on the demo's
   critical path.
@@ -113,7 +115,6 @@ logs accumulate across boots.
   median / p99 / max, incl. under CPU-hog load and across a DSP
   restart), tracelogger-based — QEMU timings are reported as
   distributions under TCG emulation, never as hardware numbers.
-- DSP warm-up guard for the restart transient.
 - QPLMS/`slm` supervision configuration replacing the hand-written
   supervisor's mechanics (policy unchanged).
 - Demo video + Devpost submission (internal deadline 2026-12-13).

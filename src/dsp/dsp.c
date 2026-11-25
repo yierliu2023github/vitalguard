@@ -12,6 +12,23 @@
 #define RESP_RING      4
 #define CLEAR_HYST_MS  1000u    /* raw must stay false this long to clear */
 #define WARMUP_MS      3000u    /* no VFib/asystole verdicts before this  */
+/* Warm-up guard: after the DSP (re)joins a stream — process start,
+ * or a t0 discontinuity that resets detector state — alarm *raises*
+ * are suppressed until WARMUP_GUARD_MS of contiguous samples have
+ * been consumed.  The window is sized from the detectors' needs:
+ *   - the VFib/asystole RMS discriminator needs its full 1 s
+ *     window (250 samples) of real signal;
+ *   - the QRS chain needs several beats for its adaptive thresholds
+ *     to settle, and HR needs >= 2 RR intervals — at 40 bpm (the
+ *     lowest non-alarm rate) two intervals take 3.0 s;
+ *   - respiration needs one full breath cycle, 5.0 s at 12/min.
+ * The 8 s SpO2 ring is deliberately NOT waited out: SPO2_LOW can
+ * never raise before its own 10 s persistence has elapsed on real
+ * averaged samples, which is already past this guard.  Persistence
+ * timers keep running during warm-up (on freshly reset state), so
+ * the guard only ever binds for the zero-persistence conditions
+ * (VFib/asystole) — exactly the ones that misfire on zeroed state. */
+#define WARMUP_GUARD_MS 5000u
 
 struct vg_dsp {
     vg_dsp_config_t cfg;
@@ -56,6 +73,11 @@ struct vg_dsp {
     int64_t  clear_since[VG_COND_COUNT];
     int      active[VG_COND_COUNT];
     uint64_t onset_ms[VG_COND_COUNT];
+
+    /* --- stream (re)join state --- */
+    uint64_t stream_start_ms;  /* t0 of the current contiguous run    */
+    uint64_t prev_t0_ms;       /* t0 of the previous block            */
+    int      have_prev;        /* prev_t0_ms is valid                 */
 };
 
 void vg_dsp_config_defaults(vg_dsp_config_t *cfg)
@@ -72,22 +94,82 @@ void vg_dsp_config_defaults(vg_dsp_config_t *cfg)
     cfg->persist_ms[VG_COND_APNEA]    = 5000;
 }
 
+/* Reset every piece of detector state to its power-on values and
+ * re-anchor the stream clock at t0_ms.  Called at construction and
+ * whenever the incoming block timestamps show the stream jumped or
+ * restarted (a discontinuity): samples from before the gap must not
+ * feed the detectors — the RMS ring, the beat/breath history and the
+ * persistence timers all assume contiguity.  Conditions already
+ * marked active stay active (their flag is the alarm manager's
+ * latched state as mirrored here); their timers restart, and the
+ * normal clear hysteresis retires them if the refilled detectors
+ * do not re-confirm them. */
+static void dsp_stream_reset(vg_dsp_t *d, uint64_t t0_ms)
+{
+    int i;
+
+    /* QRS chain */
+    d->x_prev1 = d->x_prev2 = 0.0f;
+    memset(d->mwi_ring, 0, sizeof(d->mwi_ring));
+    d->mwi_idx = 0;
+    d->mwi_sum = 0.0f;
+    d->spki = 0.02f;
+    d->npki = 0.0005f;
+    d->in_peak = 0;
+    d->peak_val = d->peak_mwi = 0.0f;
+    d->peak_sample = d->peak_deadline = 0;
+    d->peak_ms = 0;
+    d->sample_idx = 0;
+    d->last_beat_sample = 0;
+    d->last_beat_ms = t0_ms;
+    d->have_beat = 0;
+    memset(d->rr_ring, 0, sizeof(d->rr_ring));
+    d->rr_count = 0;
+    d->rr_idx = 0;
+
+    /* RMS window */
+    memset(d->rms_ring, 0, sizeof(d->rms_ring));
+    d->rms_idx = 0;
+    d->rms_sumsq = 0.0f;
+
+    /* SpO2 averaging */
+    memset(d->spo2_ring, 0, sizeof(d->spo2_ring));
+    d->spo2_idx = 0;
+    d->spo2_count = 0;
+    d->spo2_sum = 0.0f;
+
+    /* Respiration — breath timing is re-anchored at the join, so
+     * the apnea timer measures from the (re)join, not from stream
+     * time zero. */
+    d->resp_prev = 0.0f;
+    d->resp_armed = 0;
+    d->last_breath_sample = 0;
+    d->last_breath_ms = t0_ms;
+    memset(d->resp_rr_ring, 0, sizeof(d->resp_rr_ring));
+    d->resp_count = 0;
+    d->resp_idx = 0;
+
+    /* Persistence timers */
+    for (i = 0; i < VG_COND_COUNT; i++) {
+        d->raw_since[i]   = -1;
+        d->clear_since[i] = -1;
+        if (d->active[i])
+            d->onset_ms[i] = t0_ms;
+    }
+
+    d->stream_start_ms = t0_ms;
+}
+
 vg_dsp_t *vg_dsp_new(const vg_dsp_config_t *cfg)
 {
     vg_dsp_t *d = calloc(1, sizeof(*d));
-    int i;
     if (!d)
         return NULL;
     if (cfg)
         d->cfg = *cfg;
     else
         vg_dsp_config_defaults(&d->cfg);
-    d->spki = 0.02f;
-    d->npki = 0.0005f;
-    for (i = 0; i < VG_COND_COUNT; i++) {
-        d->raw_since[i]   = -1;
-        d->clear_since[i] = -1;
-    }
+    dsp_stream_reset(d, 0);
     return d;
 }
 
@@ -263,6 +345,28 @@ int vg_dsp_process_block(vg_dsp_t *d, const vg_sample_block_t *block,
     float hr, spo2_avg, rr_rate, rms;
     int raw[VG_COND_COUNT];
     uint32_t mask = 0;
+    int warmed;
+
+    /* Stream continuity: blocks must arrive back-to-back on the
+     * signal clock.  A t0 that breaks the sequence (generator
+     * restart, dropped blocks, or this DSP's first block on a
+     * stream that has been running without it) means the detector
+     * state no longer describes this stream — reset it rather than
+     * interpret the gap.  The comparison tolerates +/- half a block
+     * because the generator stamps t0 from a double clock, which
+     * jitters by a millisecond either way (measured: occasional
+     * 99/101 ms steps); a genuine break is a step backwards, a
+     * duplicate, or a gap of more than a block and a half. */
+    if (!d->have_prev || block->t0_ms <= d->prev_t0_ms ||
+        block->t0_ms - d->prev_t0_ms > VG_BLOCK_MS + VG_BLOCK_MS / 2)
+        dsp_stream_reset(d, block->t0_ms);
+    d->prev_t0_ms = block->t0_ms;
+    d->have_prev  = 1;
+
+    /* Warm-up guard: no alarm raises until the detectors have
+     * consumed WARMUP_GUARD_MS of contiguous samples since the
+     * (re)join (see the constant's comment for the sizing). */
+    warmed = (now - d->stream_start_ms) >= WARMUP_GUARD_MS;
 
     /* --- per-sample ECG + respiration processing --- */
     for (i = 0; i < VG_BLOCK_SAMPLES; i++) {
@@ -314,7 +418,12 @@ int vg_dsp_process_block(vg_dsp_t *d, const vg_sample_block_t *block,
     /* --- raw conditions --- */
     memset(raw, 0, sizeof(raw));
     {
-        uint64_t no_beat = d->have_beat ? now - d->last_beat_ms : now;
+        /* "No beat" is measured from the last beat, or — before the
+         * first beat — from the (re)join, never from stream time
+         * zero: a DSP that joins a running stream has not been
+         * beat-less for the stream's whole life. */
+        uint64_t no_beat = d->have_beat ? now - d->last_beat_ms
+                                        : now - d->stream_start_ms;
         if (now >= WARMUP_MS && no_beat >= 2000 && rms > 0.05f)
             raw[VG_COND_VFIB] = 1;
         if (now >= WARMUP_MS && no_beat >= 4000 && rms <= 0.05f)
@@ -337,7 +446,7 @@ int vg_dsp_process_block(vg_dsp_t *d, const vg_sample_block_t *block,
                 d->raw_since[i] = (int64_t)now;
                 d->onset_ms[i]  = now;
             }
-            if (!d->active[i] &&
+            if (!d->active[i] && warmed &&
                 now - (uint64_t)d->raw_since[i] >= d->cfg.persist_ms[i]) {
                 d->active[i] = 1;
                 if (events && nev < max_events) {

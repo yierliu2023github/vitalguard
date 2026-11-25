@@ -286,15 +286,57 @@ installed SDP baseline; QSTI itself is no longer needed.
   running stream mid-flight (i.e. after a supervisor restart) can
   raise a brief spurious HIGH alarm (VFIB / APNEA / ASYSTOLE,
   ~1–5 s) from its zeroed detector state. Does not occur on a
-  normal start. Fix planned: warm-up guard in the DSP (suppress
-  condition evaluation until ~5 s of contiguous samples; treat a
-  t0 jump as a state reset). Latency runs must flag the first
-  seconds after a DSP restart until this lands.
+  normal start. *(Closed the same day — see "Warm-up fix" below.)*
 - Still open: QPLMS/`slm` mechanics (mapping documented in
   docs/design.md; image runs OPT_SLM=no, supervisor via post_start),
   on-target latency distributions, sshd startup segfault in the
   image (serial console is the access path), public repo + video +
   Devpost submission (owner actions).
+
+## Warm-up fix (2026-11-25): DSP restart transient — CLOSED
+
+Full evidence: `~/workspace/qnx/custom-image/WARMUP-FIX-REPORT.md`
+(host tests + two-boot guest run, `logs/warmup-console.log`,
+`logs/warmup-result.txt` — all 16 guest checks true).
+
+- **Fix** (`src/dsp/dsp.c`, the only production file changed):
+  (a) *warm-up guard* — alarm raises are suppressed until the DSP
+  has consumed 5 s of contiguous samples after a (re)join
+  (`WARMUP_GUARD_MS`, sized from the detectors: 1 s RMS window,
+  ≥ 2 RR intervals at 40 bpm = 3 s, one breath cycle at 12/min =
+  5 s; the 8 s SpO₂ ring is covered by SPO2_LOW's own 10 s
+  persistence). Persistence timers keep running on the reset
+  state, so the guard only ever binds for the zero-persistence
+  conditions (VFib/asystole) — the ones that misfired.
+  (b) *stream-discontinuity reset* — a t0 that breaks the block
+  sequence (backwards, duplicate, or a gap > 1.5 blocks; ±half a
+  block tolerated because the generator stamps t0 from a double
+  clock with measured ±1 ms jitter) resets all detector state and
+  re-anchors beat/breath timing at the join, so "no beat" is never
+  again measured from stream time zero.
+- **Host**: `make` zero warnings; `make test` ALL PASSED, with the
+  pre-existing numbers unchanged (VFib latency 1499 ms, asystole
+  3799 ms, SpO₂ raise 16900 ms after desat) plus two new regression
+  tests — `test_rejoin_warmup` (60 s stream, fresh DSP joins: zero
+  raises in 12 s; genuine VFib then raises at 1999 ms) and
+  `test_discontinuity_reset` (+30 s t0 jump: zero raises; VFib
+  raises at 1300 ms). The strict-equality first cut of the
+  continuity check was caught by `test_spo2_persistence` (jitter
+  resets delayed the raise 21900 → 31000 ms) — hence the tolerance.
+- **Guest** (rebuilt binaries + image, native backend): cold boot
+  autostart — no alarm; `faultctl kill dsp` → supervisor restart →
+  audit log byte-identical after a 20 s rejoin observation (pre-fix
+  this window produced the spurious HIGH alarms); `faultctl vfib
+  10` → RAISED t=45599 → CONDITION_CLEARED_LATCHED t=55499
+  (Δ 9900 ms ≈ the 10 s injection).
+- **Stated trade-off**: a genuine VFib/asystole whose onset falls
+  inside the 5 s warm-up window is announced at the window
+  boundary instead of at its usual ~2 s / ~4 s mark — worst-case
+  added delay ≈ 3 s (VFib) / ≈ 1 s (asystole), only for onsets
+  within 5 s of a (re)join; all other conditions' persistence
+  delays already exceed the window, and post-warm-up detection is
+  unchanged. Latency runs should still note the first 5 s after a
+  DSP restart as guard-covered, by design.
 
 ## Milestone checklist
 
@@ -332,7 +374,8 @@ the Developer Tooling & Host Tools entry instead.
       the hand-written vgsupervisor + post_start autostart)
 - [x] Fault-injection CLI on target; kill-DSP recovery demonstrated
       on target (2026-11-25)
-- [ ] DSP warm-up guard (restart transient, see Phase 2 port)
+- [x] DSP warm-up guard (restart transient — fixed and guest-verified
+      2026-11-25, see "Warm-up fix" above)
 - [ ] Dashboard stream (io-sock TCP) or target text console fallback
 - **Exit criterion:** full scenario runs unattended; DSP killed →
   QPLMS restarts it → monitoring recovers with the gap logged.

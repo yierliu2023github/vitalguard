@@ -7,7 +7,11 @@
  *   2. VFib alarm latency after onset (budget: <= 4 s of signal);
  *   3. SpO2 alarm honours its 10 s persistence delay (no early fire,
  *      fires within the budgeted window after a desaturation);
- *   4. Asystole detection after ~4 s of flat line.
+ *   4. Asystole detection after ~4 s of flat line;
+ *   5. Mid-stream (re)join: no spurious alarms from zeroed detector
+ *      state, genuine VFib still detected after warm-up;
+ *   6. A t0 discontinuity resets detector state (no spurious alarm,
+ *      genuine detection afterwards unaffected).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,15 +61,17 @@ static void rig_free(rig_t *r)
     vg_dsp_free(r->dsp);
 }
 
-/* Feed `seconds` of signal through the DSP, recording alarm raises. */
-static void rig_feed(rig_t *r, double seconds)
+/* Feed `seconds` of signal through the DSP, recording alarm raises.
+ * Block timestamps are the generator's clock plus t0_off (used to
+ * simulate timestamp discontinuities). */
+static void rig_feed_off(rig_t *r, double seconds, uint64_t t0_off)
 {
     int blocks = (int)(seconds * 10.0);
     for (int b = 0; b < blocks; b++) {
         vg_sample_block_t block;
         vg_alarm_event_t events[8];
         int nev, i;
-        block.t0_ms = (uint64_t)(vg_ecg_time_s(r->ecg) * 1000.0);
+        block.t0_ms = (uint64_t)(vg_ecg_time_s(r->ecg) * 1000.0) + t0_off;
         for (i = 0; i < VG_BLOCK_SAMPLES; i++) {
             block.ecg[i]   = vg_ecg_next(r->ecg);
             block.pleth[i] = vg_spo2_pleth_next(
@@ -85,6 +91,36 @@ static void rig_feed(rig_t *r, double seconds)
                 r->raise_count[events[i].condition]++;
         }
     }
+}
+
+static void rig_feed(rig_t *r, double seconds)
+{
+    rig_feed_off(r, seconds, 0);
+}
+
+/* Run the generators for `seconds` WITHOUT feeding the DSP — a
+ * stream that has been running before this DSP joins it. */
+static void rig_advance_gen(rig_t *r, double seconds)
+{
+    int blocks = (int)(seconds * 10.0);
+    for (int b = 0; b < blocks; b++) {
+        int i;
+        for (i = 0; i < VG_BLOCK_SAMPLES; i++) {
+            (void)vg_ecg_next(r->ecg);
+            (void)vg_spo2_pleth_next(r->spo2,
+                                     vg_ecg_nominal_hr(r->ecg));
+            (void)vg_resp_next(r->resp);
+        }
+        vg_spo2_tick(r->spo2, VG_BLOCK_MS / 1000.0);
+    }
+}
+
+static int rig_any_raise(const rig_t *r)
+{
+    int total = 0, i;
+    for (i = 0; i < VG_COND_COUNT; i++)
+        total += r->raise_count[i];
+    return total;
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,12 +210,84 @@ static void test_asystole(void)
     rig_free(&r);
 }
 
+/* Regression: a DSP that joins a stream already running (the
+ * supervisor-restart case) starts with zeroed detector state.  It
+ * must NOT raise the spurious VFib/apnea/asystole alarms the
+ * pre-fix DSP raised within its first seconds — and a genuine
+ * VFib after warm-up must still raise with normal latency. */
+static void test_rejoin_warmup(void)
+{
+    rig_t r;
+    int64_t latency;
+    printf("test_rejoin_warmup\n");
+    rig_init(&r, 2025, 72.0f);
+    rig_advance_gen(&r, 60.0);          /* stream runs 60 s alone   */
+    vg_dsp_free(r.dsp);                 /* DSP (re)joins mid-flight */
+    r.dsp = vg_dsp_new(NULL);
+    rig_feed(&r, 12.0);
+    CHECK(rig_any_raise(&r) == 0,
+          "spurious alarm(s) after mid-stream join: VFIB=%d ASYS=%d "
+          "APNEA=%d HRH=%d HRL=%d SPO2=%d",
+          r.raise_count[VG_COND_VFIB], r.raise_count[VG_COND_ASYSTOLE],
+          r.raise_count[VG_COND_APNEA], r.raise_count[VG_COND_HR_HIGH],
+          r.raise_count[VG_COND_HR_LOW], r.raise_count[VG_COND_SPO2_LOW]);
+    CHECK(r.last_vitals.hr_bpm > 0 &&
+          fabsf(r.last_vitals.hr_bpm - 72.0f) <= 3.0f,
+          "HR after rejoin %.1f not within +/-3 of 72",
+          r.last_vitals.hr_bpm);
+    vg_ecg_set_rhythm(r.ecg, VG_RHYTHM_VFIB, 0);
+    rig_feed(&r, 8.0);
+    CHECK(r.raise_ms[VG_COND_VFIB] >= 0,
+          "genuine VFib after rejoin warm-up never raised");
+    latency = r.raise_ms[VG_COND_VFIB] - 72000;
+    printf("  VFib onset t=72000 ms (12 s after rejoin), raised at "
+           "%lld ms (latency %lld ms)\n",
+           (long long)r.raise_ms[VG_COND_VFIB], (long long)latency);
+    CHECK(latency >= 1000 && latency <= 4000,
+          "post-rejoin VFib latency %lld ms outside [1000, 4000]",
+          (long long)latency);
+    rig_free(&r);
+}
+
+/* Regression: a t0 discontinuity mid-stream (generator restart /
+ * dropped blocks) must reset detector state instead of feeding the
+ * gap to the persistence timers — no spurious alarm, and genuine
+ * detection afterwards is unaffected. */
+static void test_discontinuity_reset(void)
+{
+    rig_t r;
+    int64_t latency;
+    printf("test_discontinuity_reset\n");
+    rig_init(&r, 60606, 72.0f);
+    rig_feed_off(&r, 10.0, 0);
+    CHECK(rig_any_raise(&r) == 0, "alarm during normal rhythm");
+    rig_feed_off(&r, 12.0, 30000);      /* t0 jumps +30 s mid-stream */
+    CHECK(rig_any_raise(&r) == 0,
+          "spurious alarm(s) after t0 jump: VFIB=%d ASYS=%d APNEA=%d",
+          r.raise_count[VG_COND_VFIB], r.raise_count[VG_COND_ASYSTOLE],
+          r.raise_count[VG_COND_APNEA]);
+    vg_ecg_set_rhythm(r.ecg, VG_RHYTHM_VFIB, 0);
+    rig_feed_off(&r, 8.0, 30000);
+    CHECK(r.raise_ms[VG_COND_VFIB] >= 0,
+          "genuine VFib after discontinuity never raised");
+    latency = r.raise_ms[VG_COND_VFIB] - 52000;
+    printf("  VFib onset t=52000 ms (post-jump stream clock), raised "
+           "at %lld ms (latency %lld ms)\n",
+           (long long)r.raise_ms[VG_COND_VFIB], (long long)latency);
+    CHECK(latency >= 1000 && latency <= 4000,
+          "post-discontinuity VFib latency %lld ms outside "
+          "[1000, 4000]", (long long)latency);
+    rig_free(&r);
+}
+
 int main(void)
 {
     test_hr_accuracy();
     test_vfib_latency();
     test_spo2_persistence();
     test_asystole();
+    test_rejoin_warmup();
+    test_discontinuity_reset();
     if (g_failures) {
         printf("test_dsp: %d FAILURE(S)\n", g_failures);
         return 1;

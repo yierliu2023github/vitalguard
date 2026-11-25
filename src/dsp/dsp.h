@@ -22,6 +22,16 @@
  *
  * All timing derives from the block timestamps (the signal clock),
  * so the whole pipeline is deterministic and testable offline.
+ *
+ * Stream (re)joins: the detectors assume contiguous samples.  If a
+ * block's t0 does not continue the previous block (this DSP started
+ * on an already-running stream, the generator restarted, blocks
+ * were dropped), all detector state is reset and re-anchored at the
+ * new t0, and alarm raises are suppressed for a warm-up window
+ * (WARMUP_GUARD_MS of contiguous samples, sized in dsp.c) while the
+ * windows refill.  Without this, a DSP restarted by the supervisor
+ * would judge a healthy stream with zeroed state and raise brief
+ * spurious VFib/apnea/asystole alarms.
  */
 #ifndef VG_DSP_H
 #define VG_DSP_H
