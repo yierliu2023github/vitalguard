@@ -338,6 +338,85 @@ Full evidence: `~/workspace/qnx/custom-image/WARMUP-FIX-REPORT.md`
   unchanged. Latency runs should still note the first 5 s after a
   DSP restart as guard-covered, by design.
 
+## On-target latency measurements (2026-11-25): DONE — one budget MISS
+
+Full evidence: `~/workspace/qnx/custom-image/LATENCY-REPORT.md`
+(71 fault-injection runs + 5 supervisor-restart runs, kernel trace,
+raw logs alongside it). **All figures are TCG-emulated distributions
+(no KVM on this VM) — never quote them as hardware numbers.**
+Method: signal-clock onset (interpolated from DSP wall/signal
+anchors) → audit-log raise; reported values are upper bounds
+(true latency up to ~0.3 s lower; matters only for HR_HIGH).
+
+Headline medians (n=10 per condition):
+
+| Condition | median | max | budget | verdict |
+|---|---|---|---|---|
+| VFib | 1664 ms | 2298 ms | ≤ 4 s | ✅ |
+| VFib under 2× vghog | 2009 ms | 2332 ms | ≤ 4 s | ✅ holds under load |
+| Asystole | 3828 ms | 4205 ms | — (3.5 s persistence by construction) | ✅ |
+| Tachycardia (HR_HIGH) | 7846 ms | 8062 ms | ≤ 8 s | ⚠️ borderline — p95/max exceed by ≤ 62 ms, within the method's bias; not proven within budget |
+| Bradycardia (HR_LOW) | 14140 ms | 14542 ms | ≤ 8 s | ❌ **MISS** |
+| SpO₂ drop | 17176 ms | 17212 ms | ≤ 24 s | ✅ |
+| Apnea | 8923 ms | 11393 ms | ≤ 12 s | ✅ |
+
+- **HR_LOW miss is a design property, not emulation:** the 8-beat
+  median-RR ring needs ~5 beats (≈ 7.9 s at 38 bpm) to cross the
+  limit, then 5 s persistence runs. Phase 1 never measured brady
+  latency on the host. Fix options (shorter ring / honest budget
+  restatement) are listed in the report; **the ≤ 8 s HR_LOW claim
+  in `docs/design.md` must not be quoted until resolved.**
+- **Supervisor restart:** kill → streaming resumed in **0.78–2.11 s**
+  (n=5); growth across rapid kills is the designed 0.5→4 s backoff.
+- **Kernel trace** (`latency.kev`, tracelogger + traceprinter):
+  the full VFib alarm path under both hogs — DSP →(MsgSend,
+  VG_MSG_ALARM_EVENT)→ alarmgr round trip completes in **94 µs**;
+  fault-command → event-send 1.465 s; raise → clear-send 15.251 s
+  for a 15 s injection. IPC is ~0.005 % of end-to-end latency;
+  the budget is spent in the designed detection/persistence windows.
+- **Code/docs inconsistency found:** `priority_for` in
+  `src/dsp/dsp.c` classifies APNEA as HIGH (latched); design.md
+  says MEDIUM. Flagged in the report; not fixed in this phase.
+
+## HR latency budgets + APNEA priority: FIXED (2026-11-25)
+
+Addendum in `~/workspace/qnx/custom-image/LATENCY-REPORT.md` §7;
+guest evidence `logs/hrfix-*` alongside it (driver `hrfix_test.py`).
+
+- **HR_LOW / HR_HIGH — dual-path detection** (`src/dsp/dsp.c`).
+  The HR conditions are now raw when the 8-beat median is beyond
+  the limit **or** the most recent completed RR interval is beyond
+  the same limit; for HR_LOW the in-progress interval also counts
+  (gap since last beat > the limit's interval, capped at the 3 s
+  staleness bound, so a no-beat stream can never raise HR_LOW).
+  The 5 s persistence is unchanged and still requires raw to hold
+  continuously, so an isolated abnormal interval (raw ≈ 1
+  interval) cannot raise. Host: HR_LOW **6999 ms**, HR_HIGH
+  **5799 ms** after a step change (new `test_brady_latency` /
+  `test_tachy_latency`, asserted ≤ 8000 ms); transient bursts
+  still rejected (`test_transient_hr_no_raise`). Guest (TCG,
+  upper-bound method of the latency report): brady n=5 median
+  **7269 ms**, max **7693 ms** — within budget on every run (was
+  14140 / 14542); tachy n=3 median **6165 ms**, max **6203 ms** —
+  proven within budget (was borderline 7846 / 8062). Phase 1
+  numbers unchanged: VFib 1499 ms, asystole 3799 ms, SpO₂
+  +16900 ms; warm-up regression tests still pass; `make test`
+  ALL PASSED, zero warnings. One deliberate boundary move,
+  documented in design.md §2: a tachycardia burst ≥ ~3 s now
+  raises HR_HIGH, because the median rate remains above the
+  limit for > 5 s in total (the condition as measured meets the
+  persistence requirement); ≤ 2.5 s bursts still raise nothing.
+- **APNEA priority resolved: HIGH.** The code was right and
+  design.md was wrong. Sustained apnea (≥ 11 s without a breath
+  at annunciation) is an arrest-class event; IEC 60601-1-8
+  practice treats apnea-time-exceeded as high priority, and
+  latching matches the self-terminating-VFib rationale.
+  design.md §1 now agrees with `priority_for` (and its table
+  carries a Priority column incl. SPO2_LOW's HIGH < 80 % rule);
+  grep confirms no contradictory statement remains. The ≤ 8 s
+  HR_LOW claim in design.md may be quoted again — as fixed, with
+  the numbers above.
+
 ## Milestone checklist
 
 ### Week 1 (Nov 24–30) — platform + spine
@@ -383,8 +462,10 @@ the Developer Tooling & Host Tools entry instead.
   vgsupervisor; the QPLMS mechanics swap is what remains.)
 
 ### Week 3 (Dec 8–15) — evidence + submission (submit by Dec 13)
-- [ ] ≥ 30 latency measurement runs (median / p99 / max), incl. under
-      CPU-hog load and across DSP restart
+- [x] ≥ 30 latency measurement runs (median / p99 / max), incl. under
+      CPU-hog load and across DSP restart — **done 2026-11-25**
+      (71 injections + 5 restarts, see "On-target latency
+      measurements" above; HR_LOW budget miss recorded there)
 - [ ] Single-image build via `mkqnximage` (CTI)
 - [ ] Demo video (< 3 min) recorded and published
 - [ ] Companion codelab: “Measure your alarm latency on QNX 8.0”

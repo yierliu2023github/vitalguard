@@ -49,6 +49,8 @@ struct vg_dsp {
     int      have_beat;
     float    rr_ring[RR_RING];          /* seconds                      */
     int      rr_count, rr_idx;
+    float    last_rr_s;                 /* most recent completed RR     */
+    int      have_rr;                   /* interval; last_rr_s valid    */
 
     /* --- RMS window (VFib vs asystole) --- */
     float    rms_ring[RMS_WIN];
@@ -126,6 +128,8 @@ static void dsp_stream_reset(vg_dsp_t *d, uint64_t t0_ms)
     memset(d->rr_ring, 0, sizeof(d->rr_ring));
     d->rr_count = 0;
     d->rr_idx = 0;
+    d->last_rr_s = 0.0f;
+    d->have_rr = 0;
 
     /* RMS window */
     memset(d->rms_ring, 0, sizeof(d->rms_ring));
@@ -187,6 +191,16 @@ static void register_beat(vg_dsp_t *d, uint64_t beat_sample, uint64_t beat_ms)
     if (d->have_beat) {
         double rr = (double)(beat_sample - d->last_beat_sample)
                   / VG_SAMPLE_RATE_HZ;
+        /* Most recent completed interval, for the instantaneous
+         * HR alarm path.  The window is wider than the ring's: the
+         * ring rejects > 2 s as a gap, but a genuine 25 bpm beat
+         * interval is 2.4 s and is exactly what HR_LOW must see.
+         * Beyond 4 s the no-beat path (VFib/asystole) owns the
+         * stream, so longer gaps are not recorded as intervals. */
+        if (rr >= 0.25 && rr <= 4.0) {
+            d->last_rr_s = (float)rr;
+            d->have_rr   = 1;
+        }
         if (rr >= 0.25 && rr <= 2.0) {
             d->rr_ring[d->rr_idx] = (float)rr;
             d->rr_idx = (d->rr_idx + 1) % RR_RING;
@@ -433,6 +447,39 @@ int vg_dsp_process_block(vg_dsp_t *d, const vg_sample_block_t *block,
         raw[VG_COND_HR_HIGH] = 1;
     if (hr > 0.0f && hr < d->cfg.hr_low_bpm)
         raw[VG_COND_HR_LOW] = 1;
+    /* Instantaneous-interval path (design.md §2): the most recent
+     * completed RR interval beyond the same bpm limits is also raw.
+     * The 8-beat median alone needs ~5 new beats to cross a limit
+     * after a step rate change — at 38 bpm that is ~7.9 s before
+     * the 5 s persistence even starts, which blew the 8 s HR budget
+     * (on-target median 14.1 s; see LATENCY-REPORT.md).  With this
+     * path the first abnormal interval starts the persistence
+     * clock, so a step change raises at first-interval + 5 s
+     * (~6.6 s worst case at 38 bpm, ~5.5 s at 132 bpm).  The
+     * false-alarm behaviour is unchanged: persistence still
+     * requires raw to hold continuously, and one abnormal interval
+     * holds raw only until the next beat completes (~1 interval),
+     * so an isolated ectopic beat or a single missed detection
+     * cannot raise. */
+    if (d->have_rr && d->last_rr_s < 60.0f / d->cfg.hr_high_bpm)
+        raw[VG_COND_HR_HIGH] = 1;
+    if (d->have_rr && d->last_rr_s > 60.0f / d->cfg.hr_low_bpm)
+        raw[VG_COND_HR_LOW] = 1;
+    /* The in-progress interval counts too, for HR_LOW: once the
+     * gap since the last beat exceeds the low limit's interval,
+     * the instantaneous rate is already below the limit.  Waiting
+     * for the beat that completes the interval would add up to
+     * one full slow interval of phase-dependent delay (worst case
+     * raw at onset + ~2.5 s; this bounds it at +1.5 s).  The 3 s
+     * cap mirrors dsp_hr()'s staleness rule, so a no-beat stream
+     * (VFib/asystole) holds this raw for at most 1.5 s and can
+     * never raise HR_LOW from it. */
+    if (d->have_beat) {
+        uint64_t gap = now - d->last_beat_ms;
+        if (gap > (uint64_t)(60000.0f / d->cfg.hr_low_bpm) &&
+            gap <= 3000)
+            raw[VG_COND_HR_LOW] = 1;
+    }
     if (d->spo2_count >= 10 && spo2_avg < d->cfg.spo2_low_pct)
         raw[VG_COND_SPO2_LOW] = 1;
     if (now >= 8000 && now - d->last_breath_ms >= 6000)

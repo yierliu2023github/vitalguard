@@ -11,7 +11,11 @@
  *   5. Mid-stream (re)join: no spurious alarms from zeroed detector
  *      state, genuine VFib still detected after warm-up;
  *   6. A t0 discontinuity resets detector state (no spurious alarm,
- *      genuine detection afterwards unaffected).
+ *      genuine detection afterwards unaffected);
+ *   7. HR_LOW / HR_HIGH latency after a step rate change (budget:
+ *      <= 8 s — the instantaneous-interval path, design.md §2);
+ *   8. Transient 3 s rate excursions raise neither HR alarm
+ *      (persistence still defeats single-interval excursions).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -280,12 +284,113 @@ static void test_discontinuity_reset(void)
     rig_free(&r);
 }
 
+/* HR_LOW latency: a step change 72 -> 38 bpm must raise within
+ * the 8 s budget (design.md §2).  The 8-beat median alone needed
+ * ~5 brady beats (~7.9 s) before the 5 s persistence even started
+ * — on-target median was 14.1 s (LATENCY-REPORT.md).  The
+ * instantaneous-interval path starts the persistence clock at the
+ * first abnormal interval: expect first-interval (~1.6 s) + 5 s. */
+static void test_brady_latency(void)
+{
+    rig_t r;
+    int64_t latency;
+    printf("test_brady_latency\n");
+    rig_init(&r, 5150, 72.0f);
+    rig_feed(&r, 10.0);
+    CHECK(r.raise_ms[VG_COND_HR_LOW] < 0,
+          "HR_LOW raised during normal rhythm");
+    vg_ecg_set_rhythm(r.ecg, VG_RHYTHM_BRADY, 0);
+    rig_feed(&r, 12.0);
+    CHECK(r.raise_ms[VG_COND_HR_LOW] >= 0, "HR_LOW never raised");
+    latency = r.raise_ms[VG_COND_HR_LOW] - 10000;
+    printf("  brady onset t=10000 ms, HR_LOW raised at %lld ms "
+           "(latency %lld ms)\n",
+           (long long)r.raise_ms[VG_COND_HR_LOW], (long long)latency);
+    CHECK(latency >= 4900 && latency <= 8000,
+          "HR_LOW latency %lld ms outside [4900, 8000] budget",
+          (long long)latency);
+    CHECK(r.raise_ms[VG_COND_HR_HIGH] < 0,
+          "HR_HIGH raised during bradycardia");
+    CHECK(r.last_vitals.hr_bpm > 0 &&
+          fabsf(r.last_vitals.hr_bpm - 38.0f) <= 3.0f,
+          "HR during bradycardia %.1f not within +/-3 of 38",
+          r.last_vitals.hr_bpm);
+    rig_free(&r);
+}
+
+/* HR_HIGH latency: a step change 72 -> 132 bpm must raise within
+ * the 8 s budget with real margin (on target the median-only path
+ * was borderline: p95/max 8031/8062 ms against the 8000 ms budget,
+ * inside the measurement bias).  Expect first-interval (~0.45 s)
+ * + 5 s persistence. */
+static void test_tachy_latency(void)
+{
+    rig_t r;
+    int64_t latency;
+    printf("test_tachy_latency\n");
+    rig_init(&r, 6161, 72.0f);
+    rig_feed(&r, 10.0);
+    CHECK(r.raise_ms[VG_COND_HR_HIGH] < 0,
+          "HR_HIGH raised during normal rhythm");
+    vg_ecg_set_rhythm(r.ecg, VG_RHYTHM_TACHY, 0);
+    rig_feed(&r, 12.0);
+    CHECK(r.raise_ms[VG_COND_HR_HIGH] >= 0, "HR_HIGH never raised");
+    latency = r.raise_ms[VG_COND_HR_HIGH] - 10000;
+    printf("  tachy onset t=10000 ms, HR_HIGH raised at %lld ms "
+           "(latency %lld ms)\n",
+           (long long)r.raise_ms[VG_COND_HR_HIGH], (long long)latency);
+    CHECK(latency >= 4900 && latency <= 8000,
+          "HR_HIGH latency %lld ms outside [4900, 8000] budget",
+          (long long)latency);
+    CHECK(r.raise_ms[VG_COND_HR_LOW] < 0,
+          "HR_LOW raised during tachycardia");
+    CHECK(r.last_vitals.hr_bpm > 0 &&
+          fabsf(r.last_vitals.hr_bpm - 132.0f) <= 5.0f,
+          "HR during tachycardia %.1f not within +/-5 of 132",
+          r.last_vitals.hr_bpm);
+    rig_free(&r);
+}
+
+/* False-alarm guard for the instantaneous-interval path: brief
+ * excursions into brady/tachy territory are transients — raw
+ * holds well under the 5 s persistence — and must NOT raise.
+ * (This is the behaviour the persistence delay exists for; the
+ * fast path must not defeat it.)  Burst lengths: 3 s of brady is
+ * ~2 intervals (raw ~2.3 s); 2 s of tachy is ~4 intervals
+ * (raw ~2.9 s incl. median lag).  A >= 3 s tachy burst DOES
+ * raise, by design: the median rate then stays above the limit
+ * for > 5 s in total, so the condition as measured has met the
+ * persistence requirement — see design.md §2. */
+static void test_transient_hr_no_raise(void)
+{
+    rig_t r;
+    printf("test_transient_hr_no_raise\n");
+    rig_init(&r, 7171, 72.0f);
+    rig_feed(&r, 10.0);
+    vg_ecg_set_rhythm(r.ecg, VG_RHYTHM_BRADY, 3.0);
+    rig_feed(&r, 15.0);
+    CHECK(r.raise_count[VG_COND_HR_LOW] == 0,
+          "3 s bradycardia burst raised HR_LOW");
+    rig_free(&r);
+
+    rig_init(&r, 8181, 72.0f);
+    rig_feed(&r, 10.0);
+    vg_ecg_set_rhythm(r.ecg, VG_RHYTHM_TACHY, 2.0);
+    rig_feed(&r, 15.0);
+    CHECK(r.raise_count[VG_COND_HR_HIGH] == 0,
+          "2 s tachycardia burst raised HR_HIGH");
+    rig_free(&r);
+}
+
 int main(void)
 {
     test_hr_accuracy();
     test_vfib_latency();
     test_spo2_persistence();
     test_asystole();
+    test_brady_latency();
+    test_tachy_latency();
+    test_transient_hr_no_raise();
     test_rejoin_warmup();
     test_discontinuity_reset();
     if (g_failures) {

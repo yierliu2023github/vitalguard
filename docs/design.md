@@ -13,28 +13,41 @@ but its alarm manager is modelled on the standard's concepts:
 
 - **Priorities.** Conditions carry HIGH / MEDIUM / LOW priority.
   HIGH = a potentially life-threatening condition requiring an immediate
-  operator response (VFib, asystole). MEDIUM = an abnormal condition
+  operator response (VFib, asystole, apnea). MEDIUM = an abnormal condition
   requiring a prompt response (sustained SpO₂ below threshold, sustained
-  tachy/bradycardia, apnea). Escalation can promote a MEDIUM alarm to
+  tachy/bradycardia). Escalation can promote a MEDIUM alarm to
   HIGH when it goes unacknowledged.
+
+  Apnea is HIGH, not MEDIUM. By the time it annunciates the patient
+  has not breathed for ≥ 11 s (6 s detection + 5 s persistence):
+  it is an arrest-class event on the direct path to hypoxic arrest,
+  and mainstream monitor practice under IEC 60601-1-8 treats
+  apnea-time-exceeded as a high-priority alarm for the same reason.
+  It also latches (below): an apneic episode that self-terminates
+  still happened, and someone must see it. (An earlier draft of
+  this document listed apnea as MEDIUM while the code implemented
+  HIGH; the code's classification is the defensible one and this
+  document now agrees with it — `priority_for` in `src/dsp/dsp.c`
+  is the single source of truth.)
 - **Persistence before annunciation.** A condition must persist for a
   configured delay before it becomes an alarm. This is the single most
   effective alarm-fatigue defence: transient dips are physiology and
   sensor noise, sustained ones are events.
 
-  | Condition | Threshold | Persistence |
-  |---|---|---|
-  | VFIB | no QRS ≥ 2 s + chaotic RMS | 0 s (detection time *is* the delay) |
-  | ASYSTOLE | no QRS ≥ 4 s + flat RMS | 0 s |
-  | HR_HIGH | HR > 120 bpm | 5 s |
-  | HR_LOW | HR < 40 bpm | 5 s |
-  | SPO2_LOW | 8 s-averaged SpO₂ < 90 % | 10 s |
-  | APNEA | no breath ≥ 6 s | 5 s |
+  | Condition | Threshold | Persistence | Priority |
+  |---|---|---|---|
+  | VFIB | no QRS ≥ 2 s + chaotic RMS | 0 s (detection time *is* the delay) | HIGH |
+  | ASYSTOLE | no QRS ≥ 4 s + flat RMS | 0 s | HIGH |
+  | HR_HIGH | HR > 120 bpm | 5 s | MEDIUM |
+  | HR_LOW | HR < 40 bpm | 5 s | MEDIUM |
+  | SPO2_LOW | 8 s-averaged SpO₂ < 90 % | 10 s | MEDIUM (HIGH if < 80 %) |
+  | APNEA | no breath ≥ 6 s | 5 s | HIGH |
 
 - **Latching.** HIGH-priority alarms latch: when the condition clears,
   the alarm stays annunciated until an operator acknowledges it. A VFib
-  that self-terminates still happened, and someone must see it.
-  MEDIUM alarms clear automatically when the condition clears.
+  that self-terminates still happened, and someone must see it; the
+  same holds for a self-terminating apnea. MEDIUM alarms clear
+  automatically when the condition clears.
 - **Escalation.** An alarm that is neither acknowledged nor cleared
   within 60 s escalates: it re-annunciates and (for MEDIUM) is promoted
   to HIGH. Silence is an *audio pause*, not an acknowledgement: after
@@ -59,10 +72,38 @@ is **4 seconds of signal time**, allocated as follows:
 Other conditions are *deliberately* slower, by design, and the budget
 says so: SPO2_LOW is 10 s persistence + up to ~8 s of averaging lag, so
 its budget is ≤ 24 s from the start of a step desaturation (measured:
-16.9 s). HR_HIGH/HR_LOW carry 5 s persistence, budget ≤ 8 s. APNEA's
-budget is ≤ 12 s. A test that "fires faster" than its persistence delay
-is a failing test — see `tests/test_dsp.c`, which asserts SPO2_LOW does
-*not* fire before 10 s.
+16.9 s). APNEA's budget is ≤ 12 s. A test that "fires faster" than its
+persistence delay is a failing test — see `tests/test_dsp.c`, which
+asserts SPO2_LOW does *not* fire before 10 s.
+
+HR_HIGH/HR_LOW carry 5 s persistence with a budget of ≤ 8 s, and
+meeting it required a second detection path. The reported HR is the
+median of the last 8 RR intervals; after a step rate change the
+median needs ~5 new beats to cross a limit — at 38 bpm that is
+~7.9 s *before* the 5 s persistence starts, so a median-only design
+measured 14.1 s median on target for HR_LOW (a clear budget miss)
+and a borderline 7.85 s median / 8.06 s max for HR_HIGH. The HR
+conditions are therefore dual-path raw: the median beyond the limit
+**or** the most recent completed RR interval beyond the same limit;
+for HR_LOW the in-progress interval also counts (the gap since the
+last beat exceeding the limit's interval, capped by the same 3 s
+staleness rule the median path uses, so a no-beat stream can never
+raise HR_LOW). The persistence clock then starts at the first
+abnormal interval instead of the fifth beat: worst case at 38 bpm
+is first-interval evidence ≤ ~2.4 s after onset (beat-phase
+dependent) + 5 s persistence ≈ 7.4 s; at 132 bpm ≈ 5.9 s. Host
+measurements: HR_LOW 7.0 s, HR_HIGH 5.8 s after a step change
+(`test_brady_latency`, `test_tachy_latency`). The false-alarm
+contract is unchanged — persistence still requires the raw
+condition to hold *continuously* for 5 s, and one abnormal interval
+holds raw only until the next beat (~1 interval), so an isolated
+ectopic beat or a single missed detection cannot raise. One
+boundary did move, deliberately: a tachycardia burst of ≥ ~3 s now
+raises HR_HIGH, because the median rate remains above the limit
+for > 5 s in total — the condition as measured has met the
+persistence requirement. Shorter bursts (≤ 2.5 s) and 3 s
+bradycardia bursts still raise nothing
+(`test_transient_hr_no_raise`).
 
 **Honesty about environments.** Host numbers come from a Linux VM and
 from QEMU in the target phase. QEMU is not cycle-accurate hardware: the

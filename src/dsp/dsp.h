@@ -16,6 +16,14 @@
  *   - VFib vs asystole: when no QRS has been seen for >= 2 s, the
  *     1-second RMS of the trace separates chaotic fibrillation
  *     (RMS well above the noise floor) from a flat line.
+ *   - HR: median of the last 8 RR intervals (the reported rate).
+ *     The HR alarm conditions are dual-path: raw when the median
+ *     rate is beyond a limit OR the most recent completed RR
+ *     interval is beyond the same limit — the median alone reacts
+ *     ~5 beats late to a step rate change and missed the 8 s HR
+ *     latency budget at 38 bpm (see docs/design.md §2).  The 5 s
+ *     persistence requirement applies to the combined raw signal,
+ *     so transient single-interval excursions still cannot raise.
  *   - SpO2: 8 s moving average of the instantaneous value.
  *   - Respiration: upward threshold crossings with a refractory
  *     period; apnea is "no breath for too long".
