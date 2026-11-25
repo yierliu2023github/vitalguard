@@ -109,12 +109,23 @@ logs accumulate across boots.
 - [x] vitaldsp answers a fault command round trip (faultctl →
       vitalgen over native IPC; supervisor kill/restart on target).
 
+## Done since (see STATUS.md)
+
+- On-target alarm-latency distributions — **done 2026-11-25**:
+  71 fault injections + 5 supervisor-restart runs, incl. VFib under
+  2× CPU-hog load and a tracelogger capture of the alarm path
+  (MsgSend round trip 94 µs under load). All figures are TCG
+  distributions, never hardware numbers — LATENCY-REPORT.md in this
+  workspace; a copy lives in the repo as `docs/latency-report.md`.
+  The HR budget miss it found was fixed the same day (report §7).
+- Demo video — **recorded 2026-11-25**: `demo/vitalguard-demo.mp4`
+  in the repo (scripted guest session: boot → autostart → VFib →
+  latch → ack → kill DSP → restart → streaming resumes), with the
+  raw serial log and scripts alongside it in `demo/`.
+
 ## Still ahead (see STATUS.md)
 
-- On-target alarm-latency distributions (≥ 30 VFib injections,
-  median / p99 / max, incl. under CPU-hog load and across a DSP
-  restart), tracelogger-based — QEMU timings are reported as
-  distributions under TCG emulation, never as hardware numbers.
 - QPLMS/`slm` supervision configuration replacing the hand-written
   supervisor's mechanics (policy unchanged).
-- Demo video + Devpost submission (internal deadline 2026-12-13).
+- Owner steps: public GitHub repo push, demo-video upload, Devpost
+  submission (internal deadline 2026-12-13).

@@ -1,0 +1,122 @@
+{
+ "meta": {
+  "recorded_at": "2026-11-25 03:41:23 UTC",
+  "results": {
+   "startup_complete": "True",
+   "pipeline_up": "True",
+   "vfib_seen_in_dsp_log": "True",
+   "vfib_raised": "True",
+   "vfib_cleared_latched": "True",
+   "dsp_restarted": "True",
+   "streaming_resumed": "True",
+   "no_spurious_alarm": "True"
+  }
+ },
+ "events": [
+  {
+   "label": "boot",
+   "cmd": null,
+   "t0": 0.2,
+   "t1": 12.5,
+   "text": "non UEFI or UEFI+CSM boot\nACPI table not found (0x4746434d)\nSystem behaves poorly without PCID support.\noverriding mask for controller 2, vector_base 0\n---> Starting slogger2\n---> Starting PCI Services\n\u0011---> Starting fsevmgr\n# ---> Starting devb\n---> Mounting file systems\nPath=0 - Intel 82371SB\n target=0 lun=0     Direct-Access(0) -          QEMU HARDDISK    Rev: 2.5+\nPath=1 - Intel 82371SB\n target=0 lun=0            CD-ROM(5) - QEMU     QEMU DVD-ROM     Rev: 2.5+\n---> Mounting file systems\n---> Starting Networking\n---> Starting sshd\nMemory fault (core dumped) \n---> Starting misc\n\nTo exit QEMU, type <ctrl>a x\n\n\u001b[?7hProcess count:25\nStartup complete\nQNX vitalguard 8.0.0 2026/10/30-09:10:05EDT x86pc x86_64"
+  },
+  {
+   "label": "status_up",
+   "cmd": "cat /tmp/vitalguard/supervisor.status",
+   "t0": null,
+   "t1": 15.2,
+   "text": "\nalarmgr pid=299029 restarts=0 hb_age_ms=199 state=running\nvitaldsp pid=303127 restarts=0 hb_age_ms=200 state=running\nvitalgen pid=323608 restarts=0 hb_age_ms=0 state=running"
+  },
+  {
+   "label": "supervisor_out",
+   "cmd": "cat /tmp/vitalguard/vgsupervisor.out",
+   "t0": 15.2,
+   "t1": 15.8,
+   "text": "\n[7156] vgsupervisor: started alarmgr pid=299029\n[7527] vgsupervisor: started vitaldsp pid=303127\n[7864] vgsupervisor: started vitalgen pid=323608"
+  },
+  {
+   "label": "dsp_streaming",
+   "cmd": "tail -4 /tmp/vitalguard/vitaldsp.log",
+   "t0": 15.8,
+   "t1": 16.4,
+   "text": "\n[7944] vitaldsp: connected to alarmgr\n[8086] vitaldsp: vitalgen connected\n[13135] vitaldsp: t=5s HR=71 SpO2=98.0 RR=-1 cond=0x0"
+  },
+  {
+   "label": "vfib_cmd",
+   "cmd": "faultctl vfib 10",
+   "t0": 16.4,
+   "t1": 17.0,
+   "text": ""
+  },
+  {
+   "label": "gen_fault",
+   "cmd": "tail -2 /tmp/vitalguard/vitalgen.log",
+   "t0": 17.0,
+   "t1": 17.6,
+   "text": "\n[8076] vitalgen: connected to vitaldsp\n[16199] vitalgen: fault: rhythm -> 5 for 10.0 s"
+  },
+  {
+   "label": "dsp_vfib",
+   "cmd": "tail -4 /tmp/vitalguard/vitaldsp.log",
+   "t0": null,
+   "t1": 20.2,
+   "text": "\n[7944] vitaldsp: connected to alarmgr\n[8086] vitaldsp: vitalgen connected\n[13135] vitaldsp: t=5s HR=71 SpO2=98.0 RR=-1 cond=0x0\n[18134] vitaldsp: t=10s HR=72 SpO2=98.0 RR=16 cond=0x2"
+  },
+  {
+   "label": "audit_vfib",
+   "cmd": "cat /tmp/vitalguard/alarm_events.log",
+   "t0": 34.2,
+   "t1": 34.8,
+   "text": "\nt=9799 alarm #1 RAISED cond=VFIB prio=HIGH value=71.9\nt=19799 alarm #1 CONDITION_CLEARED_LATCHED cond=VFIB prio=HIGH value=71.9"
+  },
+  {
+   "label": "ack_cmd",
+   "cmd": "faultctl ack 1",
+   "t0": 34.8,
+   "t1": 35.4,
+   "text": ""
+  },
+  {
+   "label": "audit_ack",
+   "cmd": "tail -3 /tmp/vitalguard/alarm_events.log",
+   "t0": 37.4,
+   "t1": 37.9,
+   "text": "\nt=19799 alarm #1 CONDITION_CLEARED_LATCHED cond=VFIB prio=HIGH value=71.9\nt=26500 alarm #1 ACKED cond=VFIB prio=HIGH value=71.9\nt=26500 alarm #1 CLEARED cond=VFIB prio=HIGH value=71.9"
+  },
+  {
+   "label": "kill_cmd",
+   "cmd": "faultctl kill dsp",
+   "t0": 37.9,
+   "t1": 38.5,
+   "text": ""
+  },
+  {
+   "label": "status_restarted",
+   "cmd": "cat /tmp/vitalguard/supervisor.status",
+   "t0": null,
+   "t1": 41.7,
+   "text": "\nalarmgr pid=299029 restarts=0 hb_age_ms=99 state=running\nvitaldsp pid=720898 restarts=1 hb_age_ms=0 state=running\nvitalgen pid=323608 restarts=0 hb_age_ms=400 state=running"
+  },
+  {
+   "label": "supervisor_restart",
+   "cmd": "tail -6 /tmp/vitalguard/vgsupervisor.out",
+   "t0": 41.7,
+   "t1": 42.3,
+   "text": "\n[7156] vgsupervisor: started alarmgr pid=299029\n[7527] vgsupervisor: started vitaldsp pid=303127\n[7864] vgsupervisor: started vitalgen pid=323608\n[37733] vgsupervisor: fault: killing vitaldsp pid=303127\n[37799] vgsupervisor: vitaldsp exited; restart in 500 ms\n[38406] vgsupervisor: started vitaldsp pid=720898"
+  },
+  {
+   "label": "dsp_resumed",
+   "cmd": "tail -4 /tmp/vitalguard/vitaldsp.log",
+   "t0": 51.3,
+   "t1": 51.9,
+   "text": "\n[38465] vitaldsp: vitalgen connected\n[38472] vitaldsp: t=30s HR=-1 SpO2=97.9 RR=-1 cond=0x0\n[43472] vitaldsp: t=35s HR=72 SpO2=98.0 RR=-1 cond=0x0\n[48572] vitaldsp: t=40s HR=72 SpO2=98.0 RR=-1 cond=0x0"
+  },
+  {
+   "label": "audit_final",
+   "cmd": "tail -3 /tmp/vitalguard/alarm_events.log",
+   "t0": 51.9,
+   "t1": 52.4,
+   "text": "\nt=19799 alarm #1 CONDITION_CLEARED_LATCHED cond=VFIB prio=HIGH value=71.9\nt=26500 alarm #1 ACKED cond=VFIB prio=HIGH value=71.9\nt=26500 alarm #1 CLEARED cond=VFIB prio=HIGH value=71.9"
+  }
+ ]
+}

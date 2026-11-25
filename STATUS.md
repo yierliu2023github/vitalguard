@@ -417,6 +417,55 @@ guest evidence `logs/hrfix-*` alongside it (driver `hrfix_test.py`).
   HR_LOW claim in design.md may be quoted again — as fixed, with
   the numbers above.
 
+## Submission package (2026-11-25): prepared — owner steps remain
+
+Everything the Devpost submission needs now exists in the repo; the
+three remaining actions are the owner's (public repo push, YouTube
+upload, submission click — see the checklist below).
+
+- **README polished** (judge-facing): architecture, design
+  highlights, the measured on-target table with the TCG caveat,
+  host + target build/run instructions, known limitations. Every
+  command it documents was re-verified in this session:
+  `make` (zero warnings), `make test` (ALL PASSED),
+  `tools/demo.sh` (all beats observed under a timeout run; it ends
+  in its documented Ctrl-C wait), `make -f Makefile.qnx` (zero
+  warnings), and the guest `faultctl` commands (exercised in the
+  recorded demo session).
+- **Latency report copied into the repo** as
+  `docs/latency-report.md` (with a provenance header; raw logs and
+  the `.kev` trace stay in the target workspace) so README/Devpost
+  numbers are checkable in-repo.
+- **Devpost text drafted**: `docs/devpost-submission-draft.md` —
+  full description (inspiration, what it does, how it was built,
+  the three challenges told plainly, accomplishments with the
+  measured table, lessons, what's next incl. the companion codelab,
+  built-with tags, category Robotics & Medical + Best use of
+  QNX-specific Technologies + Best Codelab/Tutorial). Repo/video
+  URLs are bracketed placeholders for submission time.
+- **Demo video recorded**: `demo/vitalguard-demo.mp4` — 2 min 11 s,
+  1920×1080, a single scripted guest session (driver
+  `~/workspace/qnx/custom-image/demo_session.py`): clean boot →
+  autostart → streaming → `faultctl vfib 10` → VFIB HIGH raised
+  (t=9799, ≈1.7 s after onset) → CONDITION_CLEARED_LATCHED →
+  `faultctl ack 1` → `faultctl kill dsp` → supervisor restart
+  (restarts=1, new pid) → streaming resumes, audit log unchanged.
+  All 8 session checks true. Raw serial log
+  `demo/demo-session.log`, per-beat segments
+  `demo/demo-events.json`, renderer `demo/render_demo.py`
+  (PIL frames → ffmpeg; frames visually verified, no black frames).
+  The mp4 is committed (1.4 MB); the session log is on disk next to
+  it (the repo's `*.log` gitignore keeps it out of git).
+- **`qemu/run-qemu.sh` fixed**: it was still the pre-SDP QSTI
+  scaffold ("NOT YET VERIFIED", pointing at an image that was never
+  obtained). It now boots the mkqnximage output with the harness's
+  proven QEMU flags (serial on stdio); verified — guest reaches
+  "Startup complete" with the pipeline autostarting.
+  `qemu/README.md`'s stale "still ahead" list updated to match.
+- Environment note: this VM's root filesystem had been reset again
+  (QEMU gone); QEMU 8.2.2 was reinstalled via apt before the demo
+  session — same version as all prior measurements.
+
 ## Milestone checklist
 
 ### Week 1 (Nov 24–30) — platform + spine
@@ -466,11 +515,20 @@ the Developer Tooling & Host Tools entry instead.
       CPU-hog load and across DSP restart — **done 2026-11-25**
       (71 injections + 5 restarts, see "On-target latency
       measurements" above; HR_LOW budget miss recorded there)
-- [ ] Single-image build via `mkqnximage` (CTI)
-- [ ] Demo video (< 3 min) recorded and published
+- [x] Single-image build via `mkqnximage` (CTI) — the custom image
+      of the Phase 2 port (2026-11-25); boots unattended into the
+      supervised pipeline
+- [x] Demo video (< 3 min) recorded — `demo/vitalguard-demo.mp4`,
+      2 min 11 s (2026-11-25, see "Submission package" above);
+      **publishing to the owner's YouTube is the remaining owner
+      step**
 - [ ] Companion codelab: “Measure your alarm latency on QNX 8.0”
+      (method + scripts are the latency report; text being
+      finalised — see the Devpost draft's "What's next")
 - [ ] Devpost submission (also targets: Best use of QNX-specific
-      Technologies, Best Codelab/Tutorial)
+      Technologies, Best Codelab/Tutorial) — **text drafted**
+      (`docs/devpost-submission-draft.md`); the submission click
+      is an owner step, after the public repo push + video upload
 
 ### Degradation paths (pre-agreed)
 - Week 2 slips → ship ECG + SpO₂ only; still a complete demo.
