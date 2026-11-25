@@ -125,11 +125,12 @@ ALL TESTS PASSED
       https://devpost.com/software/vitalguard-hgapes ("Project
       submitted!" confirmed; editable until the 2026-12-15 14:00 EST
       deadline). Form notes: no license field and no opt-in checkboxes
-      for the Best-use-of-QNX / Best-Codelab tracks existed; an
-      optional Codelab URL field was left empty — add the link there
-      once the companion codelab is published (repo docs/codelab.md),
-      before the deadline. Devpost normalised the "gcc" built-with
-      tag to "c++".
+      for the Best-use-of-QNX / Best-Codelab tracks existed; the
+      optional Codelab URL field ("Link to your codelab — Best
+      Codelab / Tutorial only") was filled on 2026-11-25 with the
+      published codelab URL (docs/codelab.md on GitHub) and the
+      submission re-verified as SUBMITTED, 5/5 steps. Devpost
+      normalised the "gcc" built-with tag to "c++".
       (Devpost deadline 2026-12-15 14:00 EST).
 
 ## Phase 2 prep (this VM, 2026-11-24): DONE (credential-free part)
