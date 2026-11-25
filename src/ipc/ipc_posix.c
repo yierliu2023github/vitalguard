@@ -245,6 +245,45 @@ int vg_ipc_recv(vg_ipc_conn_t *conn, uint32_t *type_out, uint64_t *ts_out,
 
 /* ------------------------------------------------------------------ */
 
+#define VG_IPC_WAIT_MAX 65        /* listener + up to 64 connections */
+
+int vg_ipc_wait_any(vg_ipc_listener_t *lst, vg_ipc_conn_t **conns,
+                    int nconns, int timeout_ms)
+{
+    struct pollfd pfds[VG_IPC_WAIT_MAX];
+    int map[VG_IPC_WAIT_MAX];
+    int n = 0, i, rc;
+
+    if (lst) {
+        pfds[n].fd     = lst->fd;
+        pfds[n].events = POLLIN;
+        map[n]         = VG_IPC_WAIT_LISTENER;
+        n++;
+    }
+    for (i = 0; i < nconns && n < VG_IPC_WAIT_MAX; i++) {
+        if (!conns[i])
+            continue;
+        pfds[n].fd     = conns[i]->fd;
+        pfds[n].events = POLLIN;
+        map[n]         = i;
+        n++;
+    }
+    if (n == 0) {
+        if (timeout_ms > 0)
+            vg_sleep_ms((uint32_t)timeout_ms);
+        return VG_IPC_WAIT_TIMEOUT;
+    }
+    rc = poll(pfds, (nfds_t)n, timeout_ms);
+    if (rc <= 0)
+        return VG_IPC_WAIT_TIMEOUT;
+    for (i = 0; i < n; i++)
+        if (pfds[i].revents & (POLLIN | POLLHUP | POLLERR))
+            return map[i];
+    return VG_IPC_WAIT_TIMEOUT;
+}
+
+/* ------------------------------------------------------------------ */
+
 void vg_ipc_close(vg_ipc_conn_t *conn)
 {
     if (!conn)

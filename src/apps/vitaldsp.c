@@ -10,7 +10,6 @@
  * manager's queries are never stuck behind routine processing
  * (priority inheritance; see docs/design.md).
  */
-#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,65 +68,55 @@ int main(void)
         vg_log("connected to alarmgr");
 
     for (;;) {
-        struct pollfd pfd;
-        int rc;
+        vg_ipc_conn_t *watch[1];
+        int nwatch = 0, w, r;
+        vg_sample_block_t block;
+        vg_vitals_t vitals;
+        vg_alarm_event_t events[8];
+        uint32_t type;
+        int nev, i;
 
-        pfd.fd     = gen_conn ? vg_ipc_conn_fd(gen_conn)
-                              : vg_ipc_listener_fd(lst);
-        pfd.events = POLLIN;
-        rc = poll(&pfd, 1, 200);
+        if (gen_conn)
+            watch[nwatch++] = gen_conn;
+        w = vg_ipc_wait_any(gen_conn ? NULL : lst, watch, nwatch, 200);
         vg_hb_beat(&hb);
-        if (rc <= 0)
+        if (w == VG_IPC_WAIT_TIMEOUT)
             continue;
 
-        if (!gen_conn) {
+        if (w == VG_IPC_WAIT_LISTENER) {
             gen_conn = vg_ipc_accept(lst, 0);
             if (gen_conn)
                 vg_log("vitalgen connected");
             continue;
         }
 
-        if (pfd.revents & (POLLHUP | POLLERR)) {
-            vg_log("vitalgen disconnected");
+        /* gen_conn is ready: a block, or its peer went away (recv
+         * reports that as -1 once the queue is drained). */
+        r = vg_ipc_recv(gen_conn, &type, NULL,
+                        &block, sizeof(block), 0);
+        if (r < 0) {
+            vg_log("vitalgen connection lost");
             vg_ipc_close(gen_conn);
             gen_conn = NULL;
             continue;
         }
-        if (pfd.revents & POLLIN) {
-            vg_sample_block_t block;
-            vg_vitals_t vitals;
-            vg_alarm_event_t events[8];
-            uint32_t type;
-            int nev, i, r;
+        if (r != 1 || type != VG_MSG_SAMPLE_BLOCK)
+            continue;
 
-            r = vg_ipc_recv(gen_conn, &type, NULL,
-                            &block, sizeof(block), 0);
-            if (r != 1) {
-                if (r < 0) {
-                    vg_log("vitalgen connection lost");
-                    vg_ipc_close(gen_conn);
-                    gen_conn = NULL;
-                }
-                continue;
-            }
-            if (type != VG_MSG_SAMPLE_BLOCK)
-                continue;
+        nev = vg_dsp_process_block(dsp, &block, &vitals,
+                                   events, 8);
+        alarm_send(VG_MSG_VITALS, &vitals, sizeof(vitals),
+                   vitals.t_ms);
+        for (i = 0; i < nev; i++)
+            alarm_send(VG_MSG_ALARM_EVENT, &events[i],
+                       sizeof(events[i]), events[i].t_event_ms);
 
-            nev = vg_dsp_process_block(dsp, &block, &vitals,
-                                       events, 8);
-            alarm_send(VG_MSG_VITALS, &vitals, sizeof(vitals),
-                       vitals.t_ms);
-            for (i = 0; i < nev; i++)
-                alarm_send(VG_MSG_ALARM_EVENT, &events[i],
-                           sizeof(events[i]), events[i].t_event_ms);
-
-            if (vitals.t_ms - last_vitals_log >= 5000) {
-                last_vitals_log = vitals.t_ms;
-                vg_log("t=%llus HR=%.0f SpO2=%.1f RR=%.0f cond=0x%x",
-                       (unsigned long long)(vitals.t_ms / 1000),
-                       vitals.hr_bpm, vitals.spo2_pct, vitals.resp_rate,
-                       vitals.conditions_mask);
-            }
+        if (vitals.t_ms - last_vitals_log >= 5000) {
+            last_vitals_log = vitals.t_ms;
+            vg_log("t=%llus HR=%.0f SpO2=%.1f RR=%.0f cond=0x%x",
+                   (unsigned long long)(vitals.t_ms / 1000),
+                   vitals.hr_bpm, vitals.spo2_pct, vitals.resp_rate,
+                   vitals.conditions_mask);
         }
     }
     return 0;

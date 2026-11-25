@@ -1,6 +1,6 @@
 # VitalGuard — STATUS
 
-*Last updated: 2026-11-24. Repo: local git, initial commit `13251a4` (no
+*Last updated: 2026-11-25. Repo: local git, initial commit `13251a4` (no
 remote yet — the public GitHub repo is created by the account holder).*
 
 ## Phase 1 (host-side build): DONE
@@ -112,9 +112,10 @@ ALL TESTS PASSED
       with a valid HTTP response") on the download redirect, while
       the same endpoint answers a plain curl with a valid HTTP 401 —
       i.e. the server is healthy; the failure is in the CLT/proxy
-      download path and may be transient. Retry the single runbook
-      Step 2g command in a later session; everything else is ready.
-      QEMU boot remains blocked on this package.
+      download path and may be transient. *(Superseded 2026-11-25:
+      the QEMU image was built with mkqnximage from the SDP baseline
+      instead — see "Phase 2 port" below; QSTI is no longer needed
+      and this item is closed by bypass, not by download.)*
 - [ ] Create the public GitHub repo under the owner's account and push.
 - [ ] (Later) upload the demo video to the owner's YouTube channel;
       final Devpost submission click. Internal deadline: **2026-12-13**
@@ -244,6 +245,57 @@ it was never written to any file, log, or this repo, and is discarded.
     session; the temporary password should still be rotated by the
     holder.
 
+## Phase 2 port (2026-11-25): native backend + supervisor on target — DONE
+
+Full evidence: `~/workspace/qnx/custom-image/PORT-REPORT.md` (spike:
+`SPIKE-REPORT.md` in the same directory). The QSTI blocker was
+bypassed by building the target image with `mkqnximage` from the
+installed SDP baseline; QSTI itself is no longer needed.
+
+- **Custom QEMU image boots** to a ksh shell (mkqnximage standard
+  profile, 2 vCPU / 2 GB, TCG); VitalGuard binaries ride in
+  `/system/bin` via the `system_files.custom` snippet.
+- **`/proc/self/exe` port fix**: new `src/common/vg_path.c`
+  (`vg_self_dir()`: $VG_BINDIR → Linux /proc/self/exe → argv[0]/PATH
+  resolution). SDP headers verified to offer no QNX path mechanism
+  (procfs `exefile` is the image, not a path). vgsupervisor and
+  `faultctl hog start` use it; host behaviour unchanged.
+- **`ipc_qnx.c` implemented** (was the skeleton): name_attach /
+  name_open + HELLO handshake keyed by scoid, MsgSend/MsgReceive/
+  MsgReply with receive→queue→reply discipline and a two-slot
+  per-conn bound (backpressure), disconnect pulses mapped to the
+  POSIX hangup semantics, TimerTimeout for timeouts. Apps wait via
+  the new backend-neutral `vg_ipc_wait_any()` (ipc.h; poll() on
+  host, channel pump on QNX) — all four app loops adapted.
+  `Makefile.qnx` links the native backend instead of ipc_posix.c.
+  Host `make` + `make test` green; QNX build **zero warnings**.
+- **Guest-verified end-to-end on the native backend**: supervisor
+  starts the pipeline in dependency order (bare-name PATH route);
+  `/dev/name/local` shows all four endpoints and there are no
+  `.sock` files; `faultctl kill dsp` → vitaldsp restarted
+  (pid 442387 → 696339, restarts=1) and monitoring resumes;
+  `faultctl vfib 10` → vitalgen logs the fault, audit log shows
+  VFIB HIGH raised and cleared exactly 10.0 s apart.
+- **Autostart**: `post_start.custom` starts vgsupervisor
+  (VG_BINDIR=/system/bin) at boot; a clean boot brings the whole
+  pipeline up unattended (verified, incl. a vfib 7 sanity alarm).
+- **Native MsgSend spike + tracelogger** (spike session): demo pair
+  round-trips over name_attach/MsgSend; a 30 s instrumented-kernel
+  trace (715,569 events) decoded on the host with full COMM chains.
+- **Finding — DSP restart transient**: a vitaldsp that rejoins a
+  running stream mid-flight (i.e. after a supervisor restart) can
+  raise a brief spurious HIGH alarm (VFIB / APNEA / ASYSTOLE,
+  ~1–5 s) from its zeroed detector state. Does not occur on a
+  normal start. Fix planned: warm-up guard in the DSP (suppress
+  condition evaluation until ~5 s of contiguous samples; treat a
+  t0 jump as a state reset). Latency runs must flag the first
+  seconds after a DSP restart until this lands.
+- Still open: QPLMS/`slm` mechanics (mapping documented in
+  docs/design.md; image runs OPT_SLM=no, supervisor via post_start),
+  on-target latency distributions, sshd startup segfault in the
+  image (serial console is the access path), public repo + video +
+  Devpost submission (owner actions).
+
 ## Milestone checklist
 
 ### Week 1 (Nov 24–30) — platform + spine
@@ -252,17 +304,17 @@ it was never written to any file, log, or this repo, and is discarded.
 - [x] ECG/SpO₂/resp synthesis library with host unit tests
 - [x] Repo scaffold (README, LICENSE, design docs)
 - [x] Licence accepted + deployed (account holder, 2026-11-24)
-- [ ] SDP 8.0 + QSTI installed — **SDP 8.0 baseline installed and
-      verified 2026-11-24** (see Phase 2 completion); QSTI package
-      download still blocked (HTTP protocol error in the CLT
-      download path after the disk-space cause was fixed; 5th attempt
-      2026-11-24 15:38 CST failed identically) — retry runbook
-      Step 2g in a later session, then Step 3/4
-- [ ] MsgSend spike on QSTI: block flow over native message passing
-- [ ] First `tracelogger` capture
+- [x] SDP 8.0 + QSTI installed — **SDP 8.0 baseline installed and
+      verified 2026-11-24** (see Phase 2 completion); the QSTI
+      package download stayed blocked, so the target image was
+      built with **mkqnximage from the SDP baseline** instead
+      (2026-11-25, see "Phase 2 port" above) — QSTI no longer needed
+- [x] MsgSend spike on target: block flow over native message
+      passing (spike 2026-11-25; full pipeline since the port)
+- [x] First `tracelogger` capture (spike: 30 s, 715,569 events)
 - **Week 1 exit criterion:** vitalgen → vitaldsp data flowing inside
-  QEMU over QNX message passing. Host-side equivalent — full
-  integration suite green — is **met**.
+  QEMU over QNX message passing — **met 2026-11-25** (native
+  backend, supervised, autostarting).
 
 ### Day 3–4 go/no-go spike (restated)
 GO requires, inside QEMU: (1) sample blocks flowing vitalgen →
@@ -273,13 +325,19 @@ NO-GO fallback: demo the host build; submit the measurement tooling as
 the Developer Tooling & Host Tools entry instead.
 
 ### Week 2 (Dec 1–7) — the real system
-- [ ] QRS/HR/SpO₂ pipeline running on target; alarm persistence +
-      latching verified on target
+- [x] QRS/HR/SpO₂ pipeline running on target; alarm persistence +
+      latching verified on target (port, 2026-11-25 — ahead of plan)
 - [ ] slogger2 audit trail; QPLMS/`slm` supervision configuration
-- [ ] Fault-injection CLI on target; kill-DSP recovery demonstrated
+      (mechanics; the supervisor policy already runs on target via
+      the hand-written vgsupervisor + post_start autostart)
+- [x] Fault-injection CLI on target; kill-DSP recovery demonstrated
+      on target (2026-11-25)
+- [ ] DSP warm-up guard (restart transient, see Phase 2 port)
 - [ ] Dashboard stream (io-sock TCP) or target text console fallback
 - **Exit criterion:** full scenario runs unattended; DSP killed →
   QPLMS restarts it → monitoring recovers with the gap logged.
+  (Unattended run + kill/restart/recovery already demonstrated with
+  vgsupervisor; the QPLMS mechanics swap is what remains.)
 
 ### Week 3 (Dec 8–15) — evidence + submission (submit by Dec 13)
 - [ ] ≥ 30 latency measurement runs (median / p99 / max), incl. under

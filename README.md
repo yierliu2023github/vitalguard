@@ -97,19 +97,20 @@ src/apps/       vitalgen, vitaldsp, alarmgr, vgsupervisor processes
 src/faults/     faultctl CLI + vghog CPU-hog helper
 tests/          test_dsp, test_alarm, test_ipc, test_supervisor.sh
 docs/design.md  alarm philosophy, latency budget, QNX mechanism mapping
-qemu/           QNX QEMU target notes + launcher (in progress, needs SDP)
+qemu/           QNX QEMU target: build/run notes, native-IPC spike
 ```
 
 ## QNX target status
 
-The code is written against a POSIX subset that maps directly onto QNX
-Neutrino APIs, and the QNX IPC backend (`src/ipc/ipc_qnx.c`) is in place
-as a marked port skeleton (ChannelCreate / ConnectAttach / MsgSend /
-MsgReceive / name_attach). The remaining target work — SDP 8.0 build,
-QPLMS supervision configuration, priority assignment, and `tracelogger`
-latency distributions on the QEMU Quick Start Target Image — is gated on
-the free QNX Everywhere licence and is tracked in [STATUS.md](STATUS.md)
-and [qemu/README.md](qemu/README.md). Design rationale, the alarm
+The QNX IPC backend (`src/ipc/ipc_qnx.c`) is implemented and running
+on target: name_attach / name_open, MsgSend / MsgReceive / MsgReply
+with priority inheritance, disconnect-pulse peer-death semantics —
+the full pipeline runs under the supervisor inside a custom
+`mkqnximage` QEMU image on SDP 8.0, and the image autostarts it at
+boot. The remaining target work — QPLMS/`slm` supervision
+configuration, priority assignment, and `tracelogger` latency
+distributions on target — is tracked in [STATUS.md](STATUS.md) and
+[qemu/README.md](qemu/README.md). Design rationale, the alarm
 philosophy and the latency budget live in [docs/design.md](docs/design.md).
 
 ## Licence

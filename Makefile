@@ -18,6 +18,7 @@ BUILD = build
 BIN   = bin
 
 CORE_SRC = src/common/vg_time.c src/common/vg_log.c src/common/vg_hb.c \
+           src/common/vg_path.c \
            src/signals/ecg.c src/signals/spo2.c src/signals/resp.c \
            src/dsp/dsp.c \
            src/alarm/alarm.c \

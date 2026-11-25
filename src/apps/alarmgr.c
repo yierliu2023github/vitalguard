@@ -10,7 +10,6 @@
  * On QNX the audit trail targets slogger2; the log callback below is
  * the seam where that port lands.
  */
-#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,26 +71,12 @@ int main(void)
     vg_log("alarm manager ready");
 
     for (;;) {
-        struct pollfd pfds[1 + MAX_CONNS];
-        int nfds = 0, rc;
-
-        pfds[nfds].fd = vg_ipc_listener_fd(lst);
-        pfds[nfds].events = POLLIN;
-        nfds++;
-        for (i = 0; i < MAX_CONNS; i++) {
-            if (conns[i]) {
-                pfds[nfds].fd = vg_ipc_conn_fd(conns[i]);
-                pfds[nfds].events = POLLIN;
-                pfds[nfds].revents = 0;
-                nfds++;
-            }
-        }
-        rc = poll(pfds, nfds, 200);
+        int w = vg_ipc_wait_any(lst, conns, MAX_CONNS, 200);
         vg_hb_beat(&hb);
-        if (rc <= 0)
+        if (w == VG_IPC_WAIT_TIMEOUT)
             continue;
 
-        if (pfds[0].revents & POLLIN) {
+        if (w == VG_IPC_WAIT_LISTENER) {
             vg_ipc_conn_t *c = vg_ipc_accept(lst, 0);
             if (c) {
                 int placed = 0;
@@ -105,69 +90,48 @@ int main(void)
                 if (!placed)
                     vg_ipc_close(c);
             }
+            continue;
         }
 
-        /* Map poll slots back to connection slots: rebuild the same
-         * ordering used above. */
+        /* One connection is ready.  vg_ipc_recv() drains queued
+         * messages before reporting a disconnect (-1), which is the
+         * native form of the host loop's read-before-hangup rule:
+         * faultctl sends a command and closes immediately, and the
+         * command must still be delivered. */
         {
-            int slot = 1;
-            for (i = 0; i < MAX_CONNS; i++) {
-                uint8_t buf[VG_IPC_MAX_PAYLOAD];
-                uint32_t type;
-                int r;
-                if (!conns[i])
-                    continue;
-                if (slot >= nfds)
-                    break;
-                if (!(pfds[slot].revents & (POLLIN | POLLHUP | POLLERR))) {
-                    slot++;
-                    continue;
-                }
-                /* Read BEFORE honouring a hangup: faultctl sends a
-                 * command and closes immediately, so the socket
-                 * shows POLLIN|POLLHUP together — closing on HUP
-                 * first would discard the unread command. */
-                if (!(pfds[slot].revents & POLLIN)) {
-                    vg_ipc_close(conns[i]);
-                    conns[i] = NULL;
-                    slot++;
-                    continue;
-                }
-                r = vg_ipc_recv(conns[i], &type, NULL,
+            uint8_t buf[VG_IPC_MAX_PAYLOAD];
+            uint32_t type;
+            int r = vg_ipc_recv(conns[w], &type, NULL,
                                 buf, sizeof(buf), 0);
-                if (r < 0 || (r == 0 &&
-                              (pfds[slot].revents & (POLLHUP | POLLERR)))) {
-                    vg_ipc_close(conns[i]);
-                    conns[i] = NULL;
-                    slot++;
-                    continue;
+            if (r < 0) {
+                vg_ipc_close(conns[w]);
+                conns[w] = NULL;
+                continue;
+            }
+            if (r == 1) {
+                vg_alarm_note_t notes[8];
+                if (type == VG_MSG_VITALS) {
+                    const vg_vitals_t *v = (const vg_vitals_t *)buf;
+                    last_tick_ms = v->t_ms;
+                    vg_alarm_mgr_tick(mgr, v->t_ms, notes, 8);
+                } else if (type == VG_MSG_ALARM_EVENT) {
+                    const vg_alarm_event_t *ev =
+                        (const vg_alarm_event_t *)buf;
+                    vg_alarm_mgr_event(mgr, ev, notes, 8);
+                } else if (type == VG_MSG_ALARM_CMD) {
+                    const vg_alarm_cmd_t *cmd =
+                        (const vg_alarm_cmd_t *)buf;
+                    /* Operator commands act at the manager's
+                     * current signal-clock time: the timestamp of
+                     * the most recent vitals tick. */
+                    if (cmd->action == VG_ALARM_CMD_ACK)
+                        vg_alarm_mgr_ack(mgr, cmd->alarm_id,
+                                         last_tick_ms, notes, 8);
+                    else if (cmd->action == VG_ALARM_CMD_SILENCE)
+                        vg_alarm_mgr_silence(mgr, cmd->alarm_id,
+                                             last_tick_ms,
+                                             notes, 8);
                 }
-                if (r == 1) {
-                    vg_alarm_note_t notes[8];
-                    if (type == VG_MSG_VITALS) {
-                        const vg_vitals_t *v = (const vg_vitals_t *)buf;
-                        last_tick_ms = v->t_ms;
-                        vg_alarm_mgr_tick(mgr, v->t_ms, notes, 8);
-                    } else if (type == VG_MSG_ALARM_EVENT) {
-                        const vg_alarm_event_t *ev =
-                            (const vg_alarm_event_t *)buf;
-                        vg_alarm_mgr_event(mgr, ev, notes, 8);
-                    } else if (type == VG_MSG_ALARM_CMD) {
-                        const vg_alarm_cmd_t *cmd =
-                            (const vg_alarm_cmd_t *)buf;
-                        /* Operator commands act at the manager's
-                         * current signal-clock time: the timestamp of
-                         * the most recent vitals tick. */
-                        if (cmd->action == VG_ALARM_CMD_ACK)
-                            vg_alarm_mgr_ack(mgr, cmd->alarm_id,
-                                             last_tick_ms, notes, 8);
-                        else if (cmd->action == VG_ALARM_CMD_SILENCE)
-                            vg_alarm_mgr_silence(mgr, cmd->alarm_id,
-                                                 last_tick_ms,
-                                                 notes, 8);
-                    }
-                }
-                slot++;
             }
         }
     }

@@ -1,48 +1,119 @@
-# QNX QEMU target — in progress
+# QNX QEMU target — running
 
-**Status: licence cleared (accepted + deployed 2026-11-24); SDP
-install pending one credentialed step.** The exact install route is
-`~/workspace/qnx/INSTALL-RUNBOOK.md` — its Step 2 (myQNX cookie login,
-QSC installer download, `qnxsoftwarecenter_clt` baseline + QSTI
-package install into `~/workspace/qnx/sdp/qnx800`) is run by the
-account holder; everything after it is credential-free. Nothing here
-has been run against a real SDP yet — this file describes the plan
-and the exact steps, not results.
+**Status: the port runs on target.** The SDP 8.0 baseline is
+installed (`~/workspace/qnx/sdp/qnx800`); since the QSTI package
+could not be downloaded (see STATUS.md), the target image is built
+with `mkqnximage` from the SDP baseline instead.  Inside QEMU the
+full pipeline runs under `vgsupervisor` on the **native QNX IPC
+backend** — sample blocks, vitals, alarm events, heartbeats and
+fault commands all ride MsgSend/MsgReceive — and the image
+autostarts the pipeline at boot.  Evidence: SPIKE-REPORT.md and
+PORT-REPORT.md in `~/workspace/qnx/custom-image/`.
 
-## Planned path
+## Build
 
-1. **Licence + SDP.** ~~Accept the free non-commercial QNX Everywhere
-   licence (myQNX)~~ — done 2026-11-24 (accepted + deployed,
-   perpetual). Install QNX SDP 8.0 (~6.4 GB) on this Ubuntu 24.04
-   x86-64 host per `~/workspace/qnx/INSTALL-RUNBOOK.md`.
-2. **Target image.** Use the *Quick Start Target Image for QEMU*
-   (QSTI) shipped with the SDP as the base; later in the project,
-   produce a single custom image with `mkqnximage` (CTI) containing
-   the VitalGuard binaries and the QPLMS configuration.
-3. **Build.** Cross-compile with the SDP's `qcc` (target
-   `gcc_ntox86_64`). The codebase is C11/POSIX-subset; the only
-   target-specific file is `src/ipc/ipc_qnx.c` (native message passing
-   backend, compiled under `__QNX__`). A `Makefile.qnx` will sit next
-   to the host Makefile rather than complicating it.
-4. **Run.** `run-qemu.sh` (below) boots the image under QEMU with the
-   VitalGuard processes started by QPLMS/`slm` in dependency order
-   (alarmgr → vitaldsp → vitalgen).
-5. **Measure.** Capture alarm-latency distributions with the
-   instrumented kernel + `tracelogger` (≥ 30 VFib injections, report
-   median / p99 / max), including under CPU-hog load and across a DSP
-   kill/restart. These numbers go into the Devpost submission and the
-   demo video; QEMU timings are reported as distributions under load,
-   never as absolute hardware guarantees.
+```bash
+source ~/workspace/qnx/sdp/qnx800/qnxsdp-env.sh
+make -f Makefile.qnx            # -> bin-qnx/ (native backend)
+make                            # host build (POSIX backend)
+make test                       # host suite; must stay green
+```
 
-## Go / no-go spike (Week 1 exit criteria)
+`Makefile.qnx` links `src/ipc/ipc_qnx.c` instead of `ipc_posix.c`;
+the two backends define the same symbols, so exactly one is linked.
 
-The port is considered real when, inside QEMU:
+## The native backend (src/ipc/ipc_qnx.c)
 
-- [ ] vitalgen → vitaldsp sample blocks flow over **native QNX message
-      passing** (not the POSIX socket backend);
-- [ ] `tracelogger` captures a full block→vitals→alarm trace;
-- [ ] vitaldsp answers a fault command round trip.
+- One channel per endpoint via `name_attach()` (global namespace,
+  `/dev/name/local/<endpoint>`); clients `name_open()` and send a
+  HELLO rendezvous carrying their pid + private channel id.  The
+  server keys the connection by the kernel-supplied **scoid** and
+  ConnectAttach()es back (server→client path).
+- `vg_ipc_send()` is a synchronous MsgSend — the server thread
+  inherits the sender's priority while handling it.  The backend
+  pump receives, copies the message into a per-connection slot and
+  MsgReply()s immediately (receive → queue → reply); a second slot
+  holds one more message with its sender deliberately unreplied,
+  which bounds each connection to two messages in flight
+  (backpressure instead of an unbounded queue).
+- Peer death arrives as `_PULSE_CODE_DISCONNECT` carrying the
+  scoid; the connection drains its queue and then `vg_ipc_recv()`
+  returns −1, exactly like a socket hangup on the host.
+- Event loops never poll() fds: they call `vg_ipc_wait_any()`
+  (declared in ipc.h), which the POSIX backend implements over
+  poll() and the QNX backend implements by pumping the shared
+  listener channel with TimerTimeout() armed.  All four app loops
+  (vitalgen, vitaldsp, alarmgr, vgsupervisor) are written against
+  it, so one source tree serves both backends.
 
-If the spike fails, the fallback is to demo the host build and submit
-the measurement tooling as the Developer Tooling entry (see the project
-STATUS.md).
+Self-location (supervisor spawning siblings, `faultctl hog start`)
+goes through `vg_self_dir()` in `src/common/vg_path.c`: `$VG_BINDIR`
+override → Linux `/proc/self/exe` → argv[0]/PATH resolution.  QNX
+procfs has no exe path link (`exefile` is the image, not a path —
+verified against the SDP headers), so the argv[0]/PATH route is the
+target mechanism.
+
+## Image
+
+The mkqnximage project lives in `~/workspace/qnx/custom-image/build/`.
+VitalGuard additions are snippets in `build/local/snippets/`:
+
+- `system_files.custom` — the eight binaries (six apps + spike pair)
+  into `/system/bin` (verbatim copy: `system_files.custom.vitalguard`
+  next to the reports).
+- `post_start.custom` — autostart: `VG_BINDIR=/system/bin
+  /system/bin/vgsupervisor` in the background at the end of startup
+  (verbatim copy: `post_start.custom.vitalguard`).
+
+Rebuild (snippet edits need `--clean`):
+
+```bash
+cd ~/workspace/qnx/custom-image/build
+mkqnximage --type=qemu --arch=x86_64 --cpu=2 --ram=2G \
+           --hostname=vitalguard --ssh-ident=none --noprompt --clean
+```
+
+Guest drivers (serial-socket Python harnesses) and console logs are
+in `~/workspace/qnx/custom-image/`: `port_test.py` (supervised run,
+kill/restart, injection), `port_test2.py` (clean injection +
+restart-transient attribution), `port_test3.py` (autostart boot).
+Note: guest `/tmp` is on the persistent data partition, so runtime
+logs accumulate across boots.
+
+## Known findings on target
+
+- **DSP restart transient.** A vitaldsp that (re)joins a running
+  stream mid-flight starts with zeroed detector state and can raise
+  a brief spurious HIGH alarm (VFIB, APNEA or ASYSTOLE, ~1–5 s)
+  within its first seconds.  It does not occur on a normal start
+  (DSP starts before the generator).  Root cause is detector
+  warm-up, not the transport; the fix is a warm-up guard in the DSP
+  (suppress condition evaluation until a few seconds of contiguous
+  samples), tracked in STATUS.md.
+- The shipped sshd segfaults at startup in this image (spike
+  finding); serial console is the access path.  Not on the demo's
+  critical path.
+- Supervision on target is still the hand-written `vgsupervisor`
+  (policy proven on host and target).  The QPLMS/`slm` mapping is
+  documented in docs/design.md; the image currently runs with
+  `OPT_SLM=no` and starts the supervisor from post_start instead.
+
+## Go / no-go spike (Week 1 exit criteria) — all met
+
+- [x] vitalgen → vitaldsp sample blocks flow over **native QNX
+      message passing** (not the POSIX socket backend);
+- [x] `tracelogger` captures a full block→vitals→alarm trace
+      (spike: 715,569 events decoded on the host);
+- [x] vitaldsp answers a fault command round trip (faultctl →
+      vitalgen over native IPC; supervisor kill/restart on target).
+
+## Still ahead (see STATUS.md)
+
+- On-target alarm-latency distributions (≥ 30 VFib injections,
+  median / p99 / max, incl. under CPU-hog load and across a DSP
+  restart), tracelogger-based — QEMU timings are reported as
+  distributions under TCG emulation, never as hardware numbers.
+- DSP warm-up guard for the restart transient.
+- QPLMS/`slm` supervision configuration replacing the hand-written
+  supervisor's mechanics (policy unchanged).
+- Demo video + Devpost submission (internal deadline 2026-12-13).

@@ -1,0 +1,81 @@
+# VitalGuard — QNX 8.0 target build (cross-compile with the SDP's qcc).
+#
+#   source ~/workspace/qnx/sdp/qnx800/qnxsdp-env.sh
+#   make -f Makefile.qnx            build all processes into bin-qnx/
+#   make -f Makefile.qnx clean
+#
+# Differences from the host Makefile:
+#   - src/ipc/ipc_qnx.c is compiled INSTEAD of ipc_posix.c: the native
+#     QNX message-passing backend (name_attach/name_open, MsgSend /
+#     MsgReceive / MsgReply).  The two backends define the same
+#     symbols, so exactly one is linked.  The POSIX backend remains
+#     the host reference implementation.
+#   - -lsocket kept: QNX keeps the socket API in libsocket (the apps
+#     no longer call it directly, but the link stays identical to the
+#     spike build).
+#   - _DEFAULT_SOURCE replaced by _QNX_SOURCE: with only
+#     _POSIX_C_SOURCE set, QNX's <limits.h> hides PATH_MAX (it lives
+#     behind __EXT_UNIX_MISC, enabled by _QNX_SOURCE).
+
+CC      = qcc -Vgcc_ntox86_64
+CFLAGS  = -std=c11 -D_POSIX_C_SOURCE=200809L -D_QNX_SOURCE \
+          -Wall -Wextra -O2 -g
+INCLUDES = -Isrc/common -Isrc/signals -Isrc/dsp -Isrc/alarm \
+           -Isrc/ipc -Isrc/supervisor
+LDLIBS  = -lm -lsocket
+
+BUILD = build-qnx
+BIN   = bin-qnx
+
+CORE_SRC = src/common/vg_time.c src/common/vg_log.c src/common/vg_hb.c \
+           src/common/vg_path.c \
+           src/signals/ecg.c src/signals/spo2.c src/signals/resp.c \
+           src/dsp/dsp.c \
+           src/alarm/alarm.c \
+           src/ipc/ipc_qnx.c \
+           src/supervisor/supervisor.c
+CORE_OBJ = $(CORE_SRC:%.c=$(BUILD)/%.o)
+LIB      = $(BUILD)/libvg.a
+HEADERS  = $(wildcard src/*/*.h)
+
+APPS = $(BIN)/vitalgen $(BIN)/vitaldsp $(BIN)/alarmgr \
+       $(BIN)/vgsupervisor $(BIN)/faultctl $(BIN)/vghog
+
+all: $(APPS)
+
+$(BUILD)/%.o: %.c $(HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(LIB): $(CORE_OBJ)
+	@mkdir -p $(BUILD)
+	$(AR) rcs $@ $(CORE_OBJ)
+
+$(BIN)/vitalgen: src/apps/vitalgen.c $(LIB)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB) -o $@ $(LDLIBS)
+
+$(BIN)/vitaldsp: src/apps/vitaldsp.c $(LIB)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB) -o $@ $(LDLIBS)
+
+$(BIN)/alarmgr: src/apps/alarmgr.c $(LIB)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB) -o $@ $(LDLIBS)
+
+$(BIN)/vgsupervisor: src/apps/vgsupervisor.c $(LIB)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB) -o $@ $(LDLIBS)
+
+$(BIN)/faultctl: src/faults/faultctl.c $(LIB)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB) -o $@ $(LDLIBS)
+
+$(BIN)/vghog: src/faults/vghog.c $(LIB)
+	@mkdir -p $(BIN)
+	$(CC) $(CFLAGS) $(INCLUDES) $< $(LIB) -o $@ $(LDLIBS)
+
+clean:
+	rm -rf $(BUILD) $(BIN)
+
+.PHONY: all clean

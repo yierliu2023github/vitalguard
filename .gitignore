@@ -19,3 +19,7 @@ qnxsdp-env.sh
 *~
 .DS_Store
 .vscode/
+
+# QNX build output
+build-qnx/
+bin-qnx/

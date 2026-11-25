@@ -9,7 +9,6 @@
  * On QNX this process keeps its shape; only the transport underneath
  * changes (see src/ipc/).
  */
-#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,38 +88,32 @@ int main(void)
     for (;;) {
         uint64_t now = vg_now_ms();
         int timeout = (int)(next_block > now ? next_block - now : 0);
-        struct pollfd pfds[2];
-        int nfds = 0, rc;
+        vg_ipc_conn_t *watch[1];
+        int nwatch = 0, w;
 
-        pfds[nfds].fd = vg_ipc_listener_fd(fault_lst);
-        pfds[nfds].events = POLLIN;
-        nfds++;
-        if (fault_conn) {
-            pfds[nfds].fd = vg_ipc_conn_fd(fault_conn);
-            pfds[nfds].events = POLLIN;
-            nfds++;
-        }
-        rc = poll(pfds, nfds, timeout);
-        if (rc > 0) {
-            if (pfds[0].revents & POLLIN) {
-                vg_ipc_conn_t *c = vg_ipc_accept(fault_lst, 0);
-                if (c) {
-                    if (fault_conn)
-                        vg_ipc_close(fault_conn);
-                    fault_conn = c;
-                }
+        if (fault_conn)
+            watch[nwatch++] = fault_conn;
+        w = vg_ipc_wait_any(fault_lst, watch, nwatch, timeout);
+
+        if (w == VG_IPC_WAIT_LISTENER) {
+            vg_ipc_conn_t *c = vg_ipc_accept(fault_lst, 0);
+            if (c) {
+                if (fault_conn)
+                    vg_ipc_close(fault_conn);
+                fault_conn = c;
             }
-            if (fault_conn && nfds > 1 && (pfds[1].revents & POLLIN)) {
-                vg_fault_cmd_t cmd;
-                uint32_t type;
-                if (vg_ipc_recv(fault_conn, &type, NULL,
-                                &cmd, sizeof(cmd), 0) == 1 &&
-                    type == VG_MSG_FAULT_CMD)
-                    handle_fault(&cmd);
-            }
-            if (fault_conn && nfds > 1 && (pfds[1].revents & (POLLHUP | POLLERR))) {
+        } else if (w >= 0 && fault_conn) {
+            vg_fault_cmd_t cmd;
+            uint32_t type;
+            int r = vg_ipc_recv(fault_conn, &type, NULL,
+                                &cmd, sizeof(cmd), 0);
+            if (r < 0) {
+                /* faultctl sent its command and exited; the drained
+                 * connection now reports the disconnect. */
                 vg_ipc_close(fault_conn);
                 fault_conn = NULL;
+            } else if (r == 1 && type == VG_MSG_FAULT_CMD) {
+                handle_fault(&cmd);
             }
         }
 

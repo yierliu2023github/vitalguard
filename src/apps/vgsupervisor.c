@@ -13,7 +13,6 @@
  * prove the *policy* (ordering, backoff, budgets, liveness) before
  * the port.  See docs/design.md.
  */
-#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,6 +27,7 @@
 #include "vg.h"
 #include "vg_time.h"
 #include "vg_log.h"
+#include "vg_path.h"
 #include "ipc.h"
 #include "supervisor.h"
 
@@ -103,27 +103,24 @@ static void write_status(uint64_t now)
     rename(tmp, final);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
     vg_ipc_listener_t *lst;
     vg_ipc_conn_t *conns[MAX_CONNS];
     struct sigaction sa;
     uint64_t last_status = 0;
     int i;
-    ssize_t n;
 
+    (void)argc;
     vg_log_set_tag("vgsupervisor");
 
-    n = readlink("/proc/self/exe", g_bindir, sizeof(g_bindir) - 1);
-    if (n <= 0) {
-        vg_log("cannot resolve /proc/self/exe");
+    /* Portable self-location (see vg_path.h): $VG_BINDIR, else
+     * /proc/self/exe on Linux, else argv[0]/PATH resolution — the
+     * route that works on QNX, whose procfs has no exe path link. */
+    if (vg_self_dir(g_bindir, sizeof(g_bindir),
+                    argc > 0 ? argv[0] : NULL) != 0) {
+        vg_log("cannot resolve own executable directory");
         return 1;
-    }
-    g_bindir[n] = '\0';
-    {
-        char *slash = strrchr(g_bindir, '/');
-        if (slash)
-            *slash = '\0';
     }
 
     memset(&sa, 0, sizeof(sa));
@@ -154,28 +151,14 @@ int main(void)
     spawn_child(VG_PROC_GEN);
 
     while (!g_stop) {
-        struct pollfd pfds[1 + MAX_CONNS];
-        int nfds = 0, rc, slot;
-        uint64_t now = vg_now_ms();
+        int w, status;
+        uint64_t now;
         pid_t pid;
-        int status;
 
-        pfds[nfds].fd = vg_ipc_listener_fd(lst);
-        pfds[nfds].events = POLLIN;
-        pfds[nfds].revents = 0;
-        nfds++;
-        for (i = 0; i < MAX_CONNS; i++) {
-            if (conns[i]) {
-                pfds[nfds].fd = vg_ipc_conn_fd(conns[i]);
-                pfds[nfds].events = POLLIN;
-                pfds[nfds].revents = 0;
-                nfds++;
-            }
-        }
-        rc = poll(pfds, nfds, 200);
+        w = vg_ipc_wait_any(lst, conns, MAX_CONNS, 200);
         now = vg_now_ms();
 
-        if (rc > 0 && (pfds[0].revents & POLLIN)) {
+        if (w == VG_IPC_WAIT_LISTENER) {
             vg_ipc_conn_t *c = vg_ipc_accept(lst, 0);
             if (c) {
                 int placed = 0;
@@ -188,48 +171,32 @@ int main(void)
                 if (!placed)
                     vg_ipc_close(c);
             }
-        }
-
-        slot = 1;
-        for (i = 0; i < MAX_CONNS; i++) {
+        } else if (w >= 0) {
+            /* One connection is ready.  vg_ipc_recv() drains queued
+             * messages before reporting a disconnect (-1): the
+             * native form of the read-before-hangup rule — one-shot
+             * clients (faultctl) send and close immediately, and
+             * their command must still be delivered. */
             uint8_t buf[VG_IPC_MAX_PAYLOAD];
             uint32_t type;
-            int r;
-            if (!conns[i])
-                continue;
-            if (slot >= nfds)
-                break;
-            {
-                /* Read BEFORE honouring a hangup: one-shot clients
-                 * (faultctl) send and close immediately, so the
-                 * socket shows POLLIN|POLLHUP together — closing on
-                 * HUP first would discard the unread command. */
-                short rev = pfds[slot].revents;
-                if (rev & POLLIN) {
-                    r = vg_ipc_recv(conns[i], &type, NULL, buf, sizeof(buf), 0);
-                    if (r < 0 || (r == 0 && (rev & (POLLHUP | POLLERR)))) {
-                        vg_ipc_close(conns[i]);
-                        conns[i] = NULL;
-                    } else if (r == 1 && type == VG_MSG_HEARTBEAT) {
-                        const vg_heartbeat_t *hb = (const vg_heartbeat_t *)buf;
-                        vg_sup_heartbeat(&g_sup, hb->sender, hb->seq, now);
-                    } else if (r == 1 && type == VG_MSG_FAULT_CMD) {
-                        const vg_fault_cmd_t *cmd = (const vg_fault_cmd_t *)buf;
-                        if (cmd->kind == VG_FAULT_KILL_DSP) {
-                            vg_child_t *dsp = vg_sup_by_role(&g_sup, VG_PROC_DSP);
-                            if (dsp && dsp->running) {
-                                vg_log("fault: killing vitaldsp pid=%d",
-                                       (int)dsp->pid);
-                                kill(dsp->pid, SIGKILL);
-                            }
-                        }
+            int r = vg_ipc_recv(conns[w], &type, NULL, buf, sizeof(buf), 0);
+            if (r < 0) {
+                vg_ipc_close(conns[w]);
+                conns[w] = NULL;
+            } else if (r == 1 && type == VG_MSG_HEARTBEAT) {
+                const vg_heartbeat_t *hb = (const vg_heartbeat_t *)buf;
+                vg_sup_heartbeat(&g_sup, hb->sender, hb->seq, now);
+            } else if (r == 1 && type == VG_MSG_FAULT_CMD) {
+                const vg_fault_cmd_t *cmd = (const vg_fault_cmd_t *)buf;
+                if (cmd->kind == VG_FAULT_KILL_DSP) {
+                    vg_child_t *dsp = vg_sup_by_role(&g_sup, VG_PROC_DSP);
+                    if (dsp && dsp->running) {
+                        vg_log("fault: killing vitaldsp pid=%d",
+                               (int)dsp->pid);
+                        kill(dsp->pid, SIGKILL);
                     }
-                } else if (rev & (POLLHUP | POLLERR)) {
-                    vg_ipc_close(conns[i]);
-                    conns[i] = NULL;
                 }
             }
-            slot++;
         }
 
         /* Reap children and apply restart policy. */

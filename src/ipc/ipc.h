@@ -10,11 +10,12 @@
  *                implementation and is what the host tests exercise.
  *
  *   ipc_qnx.c    Target backend (compiles only under __QNX__):
- *                native QNX message passing — ChannelCreate /
- *                ConnectAttach / MsgSend / MsgReceive / MsgReply with
- *                priority inheritance on the alarm path.  It is a
- *                clearly marked port-target skeleton; the message
- *                layouts in vg.h are shared verbatim.
+ *                native QNX message passing — name_attach / name_open,
+ *                MsgSend / MsgReceive / MsgReply with priority
+ *                inheritance on the alarm path.  See that file for
+ *                the rendezvous mapping (HELLO handshake, per-conn
+ *                slots, disconnect pulses).  The message layouts in
+ *                vg.h are shared verbatim with the host backend.
  *
  * Semantics offered to applications (both backends):
  *   - named endpoints (VG_EP_*), one listener per name;
@@ -22,9 +23,12 @@
  *   - blocking send; receive with timeout (poll-style loops stay
  *     responsive so heartbeats and timers keep running).
  *
- * The fd accessors are a host-backend convenience used by the apps to
- * build poll() sets; the QNX backend provides equivalents over its
- * channel ids so the app structure survives the port.
+ * Event loops do NOT poll() backend fds directly: they call
+ * vg_ipc_wait_any(), which each backend implements over its own
+ * wait primitive (poll() on host; the shared channel's MsgReceive
+ * pump on QNX, where a process's connections all arrive on the one
+ * listener channel and are demultiplexed by the backend).  The fd
+ * accessors remain as a host-backend convenience.
  */
 #ifndef VG_IPC_H
 #define VG_IPC_H
@@ -70,7 +74,33 @@ int vg_ipc_recv(vg_ipc_conn_t *conn, uint32_t *type_out, uint64_t *ts_out,
 void vg_ipc_close(vg_ipc_conn_t *conn);
 void vg_ipc_listener_close(vg_ipc_listener_t *lst);
 
-/* poll() support (host backend; QNX backend maps to its wait set). */
+/* ---- event-loop wait -------------------------------------------------- */
+
+#define VG_IPC_WAIT_TIMEOUT   (-1)  /* nothing became ready in time    */
+#define VG_IPC_WAIT_LISTENER  (-2)  /* listener has a pending connect  */
+
+/* Block until the listener has a pending connection or one of
+ * conns[0..nconns) has a message (or a peer disconnect) pending, for
+ * at most timeout_ms (< 0 waits indefinitely, 0 polls).
+ *
+ * Returns VG_IPC_WAIT_LISTENER, an index into conns[], or
+ * VG_IPC_WAIT_TIMEOUT.  lst may be NULL (watch conns only) and
+ * conns/nconns may be NULL/0 (watch the listener only); NULL entries
+ * in conns[] are skipped.
+ *
+ * After a conn index is returned, the caller is expected to call
+ * vg_ipc_recv() on it: a pending disconnect surfaces there as a -1
+ * return once queued messages are drained, exactly like a socket
+ * hangup does on the host backend.
+ *
+ * QNX note: the watched conns must all belong to lst (accepted from
+ * it), or — with lst == NULL — be a single client conn; they share
+ * one receive channel, which is what the backend pumps. */
+int vg_ipc_wait_any(vg_ipc_listener_t *lst, vg_ipc_conn_t **conns,
+                    int nconns, int timeout_ms);
+
+/* poll() support (host backend; the QNX backend returns -1 — its
+ * event loops use vg_ipc_wait_any() instead). */
 int vg_ipc_conn_fd(const vg_ipc_conn_t *conn);
 int vg_ipc_listener_fd(const vg_ipc_listener_t *lst);
 

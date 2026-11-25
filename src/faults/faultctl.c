@@ -26,6 +26,7 @@
 
 #include "vg.h"
 #include "vg_time.h"
+#include "vg_path.h"
 #include "ipc.h"
 #include "signals.h"   /* vg_rhythm_t for the rhythm name map */
 
@@ -87,21 +88,18 @@ static uint32_t secs_arg(const char *s, uint32_t default_ms)
 
 /* ---- CPU hog management ---- */
 
+static const char *g_argv0;   /* for vg_self_dir() in hog_start() */
+
 static int hog_start(void)
 {
     char exe[PATH_MAX], path[PATH_MAX], pidpath[PATH_MAX], logpath[PATH_MAX];
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
     pid_t pid;
     FILE *f;
 
-    if (n <= 0)
+    /* Portable self-location (see vg_path.h) — /proc/self/exe does
+     * not exist as a path link on QNX. */
+    if (vg_self_dir(exe, sizeof(exe), g_argv0) != 0)
         return -1;
-    exe[n] = '\0';
-    {
-        char *slash = strrchr(exe, '/');
-        if (slash)
-            *slash = '\0';
-    }
     if (snprintf(path, sizeof(path), "%s/vghog", exe) >= (int)sizeof(path))
         return -1;
     snprintf(pidpath, sizeof(pidpath), "%s/hog.pid", vg_ipc_runtime_dir());
@@ -171,6 +169,7 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
+    g_argv0 = argc > 0 ? argv[0] : NULL;
     if (argc < 2) {
         usage();
         return 2;
