@@ -43,13 +43,15 @@ where they are used.
 |---|---|
 | `~/workspace/vitalguard/` | The source repo (also on GitHub: https://github.com/yierliu2023github/vitalguard) |
 | `~/workspace/qnx/sdp/qnx800/` | The installed QNX SDP 8.0 (`qcc`, `mkqnximage`, `traceprinter`) |
-| `~/workspace/qnx/custom-image/` | The target workspace: `build/` (the mkqnximage project), the Python measurement harness (`latency_test.py`, `analyze_latency.py`, `hrfix_test.py`, `latency_sink.py`), the reports, and `logs/` with the raw data |
+| `~/workspace/qnx/custom-image/` | The target workspace: `build/` (the mkqnximage project), the reports, and `logs/` with the raw data. The measurement harness was developed and run here; the originals still live here, next to the data they produced |
+| `qemu/harness/` (in the repo) | The Python measurement harness — `latency_test.py`, `analyze_latency.py`, `hrfix_test.py`, `analyze_hrfix.py`, `warmup_test.py`, `latency_sink.py` — published as byte-identical copies of the scripts that ran the campaign (see `qemu/harness/README.md`) |
 
 If your checkout lives elsewhere, adjust the paths — every command
 below is written against this layout. Design background is in
 `docs/design.md`; the full measurement report this codelab follows
-is `docs/latency-report.md` in the repo (raw data and scripts in the
-target workspace above).
+is `docs/latency-report.md` in the repo (the harness scripts are in
+`qemu/harness/` in the repo; the raw data is in the target
+workspace above).
 
 ---
 
@@ -461,7 +463,8 @@ signal time of the fault:
 1. Find the two anchors that bracket the fault's wall stamp.
 2. Linearly interpolate between them.
 
-That is exactly what `analyze_latency.py`'s `onset_signal()` does.
+That is exactly what `analyze_latency.py`'s `onset_signal()` does
+(the analyser is in `qemu/harness/` in this repo).
 With ≈ 5 s anchor spacing and a signal clock that is paced in real
 time (100 ms blocks), interpolation error is small.
 
@@ -475,7 +478,9 @@ case, and Step 9 flags the one place it did.
 
 ### 5.3 The driver
 
-`latency_test.py` (in the target workspace) automates the whole
+`latency_test.py` (in `qemu/harness/` in this repo — a
+byte-identical copy of the script that ran the campaign; the
+original lives in the target workspace) automates the whole
 campaign. It boots the image headless with the serial console on a
 Unix socket, waits for `Startup complete`, gates on the Step 3
 checks (three `state=running` lines, a clean `cond=0x0` vitals
@@ -491,14 +496,17 @@ then for each run it:
 6. lets the signal settle clean before the next run.
 
 Raw per-run records land in `logs/latency-<phase>-runs.json`, and
-the guest log segments in `logs/latency-<phase>-{audit,gen,dsp,sup}.log`.
+the guest log segments in `logs/latency-<phase>-{audit,gen,dsp,sup}.log`
+(both under `~/workspace/qnx/custom-image/` — the scripts carry
+that layout in their path constants, so their outputs land there
+wherever you invoke them from).
 
 Run the baseline campaign (phase A, 10 runs per condition):
 
 ```bash
-cd ~/workspace/qnx/custom-image
-python3 latency_test.py A 10
-python3 analyze_latency.py     # -> logs/latency-stats.json + a per-run table
+python3 ~/workspace/vitalguard/qemu/harness/latency_test.py A 10
+python3 ~/workspace/vitalguard/qemu/harness/analyze_latency.py
+# -> ~/workspace/qnx/custom-image/logs/latency-stats.json + a per-run table
 ```
 
 The analyser recomputes each run's interpolated onset from the DSP
@@ -569,9 +577,8 @@ guest CPUs are saturated by `vghog` — a busy-loop spinner that runs
 at nice 10, i.e. *below* the pipeline in scheduling priority.
 
 ```bash
-cd ~/workspace/qnx/custom-image
-python3 latency_test.py B 10
-python3 analyze_latency.py
+python3 ~/workspace/vitalguard/qemu/harness/latency_test.py B 10
+python3 ~/workspace/vitalguard/qemu/harness/analyze_latency.py
 ```
 
 Inside the guest, phase B does the equivalent of:
@@ -631,8 +638,8 @@ networking maps the host to `10.0.2.2`. Start the sink on the host
 first:
 
 ```bash
-cd ~/workspace/qnx/custom-image
-python3 latency_sink.py    # HTTP server on :9999; saves the PUT body to latency.kev
+python3 ~/workspace/vitalguard/qemu/harness/latency_sink.py
+# HTTP server on :9999; saves the PUT body to ~/workspace/qnx/custom-image/latency.kev
 ```
 
 Then, in the guest:
@@ -647,7 +654,8 @@ On the host, with the SDP environment sourced:
 
 ```bash
 source ~/workspace/qnx/sdp/qnx800/qnxsdp-env.sh
-traceprinter -f latency.kev -o logs/latency-trace.txt
+traceprinter -f ~/workspace/qnx/custom-image/latency.kev \
+             -o ~/workspace/qnx/custom-image/logs/latency-trace.txt
 ```
 
 (Note: `traceprinter` takes the input via `-f`, not positionally.)
@@ -722,7 +730,8 @@ You can do this by hand in the guest: watch
 `/tmp/vitalguard/supervisor.status` — `vitaldsp`'s `restarts=`
 counter increments and a new pid appears — and watch
 `vitaldsp.log` resume. For numbers, the analyser's
-`restart_analysis()` works offline from the wall-clock stamps in
+(`qemu/harness/analyze_latency.py`) `restart_analysis()` works
+offline from the wall-clock stamps in
 `vgsupervisor.out` (the "fault: killing vitaldsp" and "started
 vitaldsp pid=" lines) and `vitaldsp.log` (the "vitalgen connected"
 line and the first vitals anchor after it):
@@ -936,7 +945,8 @@ treats as high priority; `docs/design.md` §1 now agrees with
 Each exercise uses only machinery you have already built.
 
 1. **Reproduce, then diff.** Re-run phase A
-   (`python3 latency_test.py A 10`) and compare your distributions
+   (`python3 qemu/harness/latency_test.py A 10` from the repo root)
+   and compare your distributions
    with Step 5.4. TCG jitter will move individual runs; the medians
    should track. If one condition is systematically off, find out
    why before believing either set.
@@ -986,10 +996,12 @@ Each exercise uses only machinery you have already built.
   `LATENCY-REPORT.md` (the same report, with the raw-data
   inventory), `WARMUP-FIX-REPORT.md` (Step 9.1 in full),
   `PORT-REPORT.md` and `SPIKE-REPORT.md` (the native-IPC port and
-  the first trace), `REPORT.md` (the image build), and the harness
-  itself — `latency_test.py`, `analyze_latency.py`,
-  `hrfix_test.py`, `analyze_hrfix.py`, `latency_sink.py`,
-  `warmup_test.py`.
+  the first trace), and `REPORT.md` (the image build).
+- The harness itself is in this repo under `qemu/harness/` —
+  `latency_test.py`, `analyze_latency.py`, `hrfix_test.py`,
+  `analyze_hrfix.py`, `latency_sink.py`, `warmup_test.py` —
+  byte-identical copies of the campaign scripts; the originals
+  live in the target workspace, alongside the raw data.
 - `qemu/README.md` — the target build, the native backend, and the
   image recipe in reference form.
 - `demo/` in the repo — the recorded demo session (boot → VFib →

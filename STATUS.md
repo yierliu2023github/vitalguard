@@ -541,6 +541,14 @@ the Developer Tooling & Host Tools entry instead.
       restart timing, the two pitfalls with fixes, exercises).
       Published URL for the Devpost Codelab URL field:
       https://github.com/yierliu2023github/vitalguard/blob/main/docs/codelab.md
+      Reproducibility gap closed 2026-11-25: the harness scripts
+      the codelab references (`latency_test.py`, `analyze_latency.py`,
+      `warmup_test.py`, `hrfix_test.py`, `analyze_hrfix.py`,
+      `latency_sink.py`) are now in the repo under `qemu/harness/`,
+      copied byte-for-byte from `~/workspace/qnx/custom-image/`
+      (SHA-256 verified at copy time) with a README; the codelab's
+      references now point at the in-repo paths, noting the
+      originals remain in the target workspace.
 - [ ] Devpost submission (also targets: Best use of QNX-specific
       Technologies, Best Codelab/Tutorial) — **text drafted**
       (`docs/devpost-submission-draft.md`); the submission click
