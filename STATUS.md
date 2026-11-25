@@ -532,9 +532,15 @@ the Developer Tooling & Host Tools entry instead.
 - [x] Demo video (< 3 min) recorded — `demo/vitalguard-demo.mp4`,
       2 min 11 s (2026-11-25, see "Submission package" above);
       published 2026-11-25: https://www.youtube.com/watch?v=xsWSZhib14E
-- [ ] Companion codelab: “Measure your alarm latency on QNX 8.0”
-      (method + scripts are the latency report; text being
-      finalised — see the Devpost draft's "What's next")
+- [x] Companion codelab: “Measure your alarm latency on QNX 8.0”
+      — **written 2026-11-25**: `docs/codelab.md` (10 steps:
+      prerequisites/scope, mkqnximage image build, host+target
+      builds and autostart check, faultctl driving, the
+      anchor-interpolation measurement method, under-load set,
+      tracelogger/traceprinter alarm-path reading, supervisor
+      restart timing, the two pitfalls with fixes, exercises).
+      Published URL for the Devpost Codelab URL field:
+      https://github.com/yierliu2023github/vitalguard/blob/main/docs/codelab.md
 - [ ] Devpost submission (also targets: Best use of QNX-specific
       Technologies, Best Codelab/Tutorial) — **text drafted**
       (`docs/devpost-submission-draft.md`); the submission click
