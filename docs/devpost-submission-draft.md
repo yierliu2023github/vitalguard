@@ -9,8 +9,7 @@ two bracketed links are filled in at submission time.*
 - **Category:** Robotics & Medical
 - **Also targeting:** Best use of QNX-specific Technologies ·
   Best Codelab / Tutorial (companion codelab, see below)
-- **Repository:** [PUBLIC REPO URL — filled in when the owner creates
-  and pushes the public GitHub repo]
+- **Repository:** https://github.com/yierliu2023github/vitalguard
 - **Demo video:** [YOUTUBE URL — filled in when the owner uploads
   `demo/vitalguard-demo.mp4`, 2 min 11 s]
 - **License:** Apache-2.0

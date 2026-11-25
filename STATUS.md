@@ -1,7 +1,8 @@
 # VitalGuard — STATUS
 
-*Last updated: 2026-11-25. Repo: local git, initial commit `13251a4` (no
-remote yet — the public GitHub repo is created by the account holder).*
+*Last updated: 2026-11-25. Public repo:
+https://github.com/yierliu2023github/vitalguard (created and pushed
+2026-11-25; local `main` tracks `origin/main`).*
 
 ## Phase 1 (host-side build): DONE
 
@@ -116,7 +117,8 @@ ALL TESTS PASSED
       the QEMU image was built with mkqnximage from the SDP baseline
       instead — see "Phase 2 port" below; QSTI is no longer needed
       and this item is closed by bypass, not by download.)*
-- [ ] Create the public GitHub repo under the owner's account and push.
+- [x] Create the public GitHub repo under the owner's account and push.
+      Done 2026-11-25: https://github.com/yierliu2023github/vitalguard
 - [ ] (Later) upload the demo video to the owner's YouTube channel;
       final Devpost submission click. Internal deadline: **2026-12-13**
       (Devpost deadline 2026-12-15 14:00 EST).
