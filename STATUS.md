@@ -119,8 +119,9 @@ ALL TESTS PASSED
       and this item is closed by bypass, not by download.)*
 - [x] Create the public GitHub repo under the owner's account and push.
       Done 2026-11-25: https://github.com/yierliu2023github/vitalguard
-- [ ] (Later) upload the demo video to the owner's YouTube channel;
-      final Devpost submission click. Internal deadline: **2026-12-13**
+- [x] Upload the demo video to the owner's YouTube channel.
+      Done 2026-11-25: https://www.youtube.com/watch?v=xsWSZhib14E
+- [ ] Final Devpost submission click. Internal deadline: **2026-12-13**
       (Devpost deadline 2026-12-15 14:00 EST).
 
 ## Phase 2 prep (this VM, 2026-11-24): DONE (credential-free part)
@@ -522,8 +523,7 @@ the Developer Tooling & Host Tools entry instead.
       supervised pipeline
 - [x] Demo video (< 3 min) recorded — `demo/vitalguard-demo.mp4`,
       2 min 11 s (2026-11-25, see "Submission package" above);
-      **publishing to the owner's YouTube is the remaining owner
-      step**
+      published 2026-11-25: https://www.youtube.com/watch?v=xsWSZhib14E
 - [ ] Companion codelab: “Measure your alarm latency on QNX 8.0”
       (method + scripts are the latency report; text being
       finalised — see the Devpost draft's "What's next")
