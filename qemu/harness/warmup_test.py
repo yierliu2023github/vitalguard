@@ -130,7 +130,11 @@ g.pump(18.0)
 seg = g.run_cmd("cat /tmp/vitalguard/supervisor.status", 30)
 results["a_status_all_running"] = seg.count(b"state=running") >= 3
 seg = g.run_cmd("ls -l /system/bin/vitaldsp", 30)
-results["a_dsp_binary_65800"] = b"65800" in seg
+# image must carry exactly the current host-built binary (size drifts
+# with rebuilds; the old hardcoded 65800 went stale on 2026-11-28)
+expected = str(os.path.getsize(
+    os.path.expanduser("~/workspace/vitalguard/bin-qnx/vitaldsp"))).encode()
+results["a_dsp_binary_matches_host"] = expected in seg
 seg = g.run_cmd("tail -3 /tmp/vitalguard/vitaldsp.log", 30)
 results["a_streaming"] = b"HR=" in seg and b"cond=0x0" in seg
 

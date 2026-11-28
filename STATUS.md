@@ -1,6 +1,7 @@
 # VitalGuard — STATUS
 
-*Last updated: 2026-11-25. Public repo:
+*Last updated: 2026-11-28 (periodic check; see "Periodic check
+2026-11-28" below). Public repo:
 https://github.com/yierliu2023github/vitalguard (created and pushed
 2026-11-25; local `main` tracks `origin/main`).*
 
@@ -428,6 +429,55 @@ guest evidence `logs/hrfix-*` alongside it (driver `hrfix_test.py`).
   grep confirms no contradictory statement remains. The ≤ 8 s
   HR_LOW claim in design.md may be quoted again — as fixed, with
   the numbers above.
+
+## Periodic check 2026-11-28 — all green, one harness fix
+
+First run of the periodic check (every ~3 days until the deadline).
+
+- **GitHub**: local `main` == `origin/main` (`3c08ed4`); repo still
+  PUBLIC, 0 stars / 0 forks / 0 issues, no new activity since the
+  2026-11-25 push.
+- **Devpost** (verified in the owner's signed-in browser): still
+  "Project submitted", 5/5 steps, "SUBMITTED TO QNX Global
+  Hackathon, 18 more days to submit"; deadline Dec 15, 2026 14:00
+  EST. The Codelab URL field is already filled with
+  `https://github.com/yierliu2023github/vitalguard/blob/main/docs/codelab.md`
+  — no edit needed. No organizer/judge notifications, comments, or
+  likes (0/0).
+- **YouTube**: demo video still public and playable
+  (`xsWSZhib14E`).
+- **Environment**: SDP 8.0 baseline intact, QEMU 8.2.2 present,
+  `gh auth status` OK as yierliu2023github, no `/dev/kvm` (TCG, as
+  before). `/root/.qnx` is absent after another root-filesystem
+  reset, but the licence copy in `~/.qnx/license/` is intact and
+  `qcc` works — no recovery needed.
+- **Host**: `make` clean rebuild, zero warnings; `make test`
+  ALL PASSED (dsp/alarm/ipc/supervisor).
+- **QNX**: `make -f Makefile.qnx` clean rebuild (after sourcing
+  `qnxsdp-env.sh` — without it `qcc` is not on PATH), zero
+  warnings, 6 QNX ELF binaries. Image rebuilt with
+  `mkqnximage --clean` (note: without `--clean` it reports
+  "Nothing to do" even after the binaries change).
+- **Guest smoke** (`warmup_test.py`, two boots): all 16 checks true
+  — autostart, streaming, `kill dsp` → supervisor restart with no
+  spurious alarm in the 20 s rejoin window, `vfib 10` raised and
+  cleared 9.9–10.0 s apart, cold boot with no alarm.
+- **Latency spot check** (same anchor-interpolation method as
+  LATENCY-REPORT, TCG): VFib n=4 median **1767 ms**, max 2014 ms
+  (budget ≤ 4 s); brady n=4 median **7242 ms**, max 7353 ms
+  (budget ≤ 8 s). Both track the 2026-11-25 campaign numbers
+  (1664/2298 and 7269/7693) — no drift.
+- **Fix this round**: the warmup driver's binary-presence check
+  asserted a hardcoded size (`65800`, the 2026-11-25 build) and
+  failed on the rebuilt binary (66056). Changed it to compare
+  against the current host-built `bin-qnx/vitaldsp` size, in both
+  `~/workspace/qnx/custom-image/warmup_test.py` and the in-repo
+  copy `qemu/harness/warmup_test.py`; re-ran the driver to prove
+  it (16/16 true). No production code changed; no submitted
+  numbers or text changed.
+- Evidence: `~/workspace/qnx/custom-image/logs/periodic-2026-11-28-*`
+  (image build, warmup, spot-check runs + `latency-s-*` segments);
+  run log `~/workspace/goals/5/hidden_files/qnx/periodic-check-log.md`.
 
 ## Submission package (2026-11-25): prepared — owner steps remain
 
